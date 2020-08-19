@@ -1,0 +1,9 @@
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/defines.h.in
+    ${CMAKE_CURRENT_SOURCE_DIR}/defines.h
+)
+
+add_subdirectory(Common)
+add_subdirectory(VkUtils)
+
+add_subdirectory(06_cube)

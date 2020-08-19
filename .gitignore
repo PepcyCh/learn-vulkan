@@ -1,0 +1,11 @@
+.DS_Store
+.vscode
+.idea
+.clangd
+
+build
+cmake-build-debug
+compile_commands.json
+
+*.spv
+defines.h
