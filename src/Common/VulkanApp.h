@@ -47,9 +47,12 @@ protected:
     void CreateCommandObjects();
     void CreateSyncObjects();
 
+    void CalcFrameStats();
+
     GLFWwindow *glfw_window = nullptr;
     uint32_t client_width = 2400;
     uint32_t client_height = 1350;
+    std::string window_title = "Learn Vulkan";
     bool resized = false;
 
     vk::UniqueInstance instance;
