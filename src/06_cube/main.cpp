@@ -78,7 +78,7 @@ public:
 
         BuildRenderPass();
         BuildFramebuffers();
-        BuildDescriptorSetLayout();
+        BuildLayouts();
         BuildDescriptorSets();
         BuildShaderModules();
         BuildRenderItems();
@@ -182,7 +182,7 @@ private:
             }
         }
 
-        curr_frame = (curr_frame + 1) % swapchain->n_image;
+        curr_frame = (curr_frame + 1) % n_inflight_frames;
     }
 
     void OnResize() override {
@@ -261,12 +261,15 @@ private:
             frame_buffers[i] = device->logical_device->createFramebufferUnique(create_info);
         }
     }
-    void BuildDescriptorSetLayout() {
+    void BuildLayouts() {
         std::array<vk::DescriptorSetLayoutBinding, 1> bindings = {
             vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex)
         };
-        vk::DescriptorSetLayoutCreateInfo create_info({}, bindings.size(), bindings.data());
-        descriptor_set_layout = device->logical_device->createDescriptorSetLayoutUnique(create_info);
+        vk::DescriptorSetLayoutCreateInfo set_layout_create_info({}, bindings.size(), bindings.data());
+        descriptor_set_layout = device->logical_device->createDescriptorSetLayoutUnique(set_layout_create_info);
+
+        vk::PipelineLayoutCreateInfo pipeline_layout_create_info({}, 1, &descriptor_set_layout.get(), 0, nullptr);
+        pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
     void BuildDescriptorSets() {
         std::array<vk::DescriptorPoolSize, 1> pool_sizes = {
@@ -293,8 +296,8 @@ private:
         ritem = std::move(cube);
     }
     void BuildFrameResources() {
-        frame_resources.resize(swapchain->n_image);
-        for (size_t i = 0; i < swapchain->n_image; i++) {
+        frame_resources.resize(n_inflight_frames);
+        for (size_t i = 0; i < n_inflight_frames; i++) {
             frame_resources[i] = std::make_unique<FrameResources>(device.get(), descriptor_pool.get(),
                 descriptor_set_layout.get(), sizeof(UniformBuffer));
         }
@@ -333,9 +336,6 @@ private:
             vk::DynamicState::eViewport, vk::DynamicState::eScissor
         };
         vk::PipelineDynamicStateCreateInfo dynamic_state({}, dynamic_states.size(), dynamic_states.data());
-
-        vk::PipelineLayoutCreateInfo pipeline_layout_create_info({}, 1, &descriptor_set_layout.get(), 0, nullptr);
-        pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
 
         vk::GraphicsPipelineCreateInfo create_info({}, shader_stages.size(), shader_stages.data(), &vertex_input,
             &input_assembly, nullptr, &viewport, &rasterization, &multisample, &depth_stencil, &color_blend,

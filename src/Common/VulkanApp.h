@@ -59,14 +59,14 @@ protected:
 
     std::unique_ptr<vku::Device> device;
     std::unique_ptr<vku::Swapchain> swapchain;
-    uint32_t curr_frame = 0;
 
     vk::Queue graphics_queue;
     // vk::Queue compute_queue;
     // vk::Queue transfer_queue;
 
-    vk::UniqueCommandPool main_command_pool;
-    std::vector<vk::UniqueCommandPool> command_pools;
+    uint32_t n_inflight_frames = 3;
+    uint32_t curr_frame = 0;
+    vk::UniqueCommandPool command_pool;
     vk::UniqueCommandBuffer main_command_buffer;
     std::vector<vk::UniqueCommandBuffer> command_buffers;
 

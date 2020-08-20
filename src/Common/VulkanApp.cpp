@@ -212,33 +212,26 @@ void VulkanApp::CreateSwapchain() {
 void VulkanApp::CreateCommandObjects() {
     uint32_t graphics_queue_index = device->queue_families.graphics.value();
     vk::CommandPoolCreateInfo pool_create_info(vk::CommandPoolCreateFlagBits::eResetCommandBuffer, graphics_queue_index);
-    main_command_pool = device->logical_device->createCommandPoolUnique(pool_create_info);
-    command_pools.resize(swapchain->n_image);
-    for (auto &command_pool : command_pools) {
-        command_pool = device->logical_device->createCommandPoolUnique(pool_create_info);
-    }
+    command_pool = device->logical_device->createCommandPoolUnique(pool_create_info);
 
-    vk::CommandBufferAllocateInfo buffer_allocate_info(main_command_pool.get(), vk::CommandBufferLevel::ePrimary, 1);
+    vk::CommandBufferAllocateInfo buffer_allocate_info(command_pool.get(), vk::CommandBufferLevel::ePrimary, 1);
     main_command_buffer = std::move(device->logical_device->allocateCommandBuffersUnique(buffer_allocate_info)[0]);
-    command_buffers.resize(swapchain->n_image);
-    for (size_t i = 0; i < command_pools.size(); i++) {
-        vk::CommandBufferAllocateInfo allocate_info(command_pools[i].get(), vk::CommandBufferLevel::ePrimary, 1);
-        command_buffers[i] = std::move(device->logical_device->allocateCommandBuffersUnique(allocate_info)[0]);
-    }
+    buffer_allocate_info.setCommandBufferCount(n_inflight_frames);
+    command_buffers = device->logical_device->allocateCommandBuffersUnique(buffer_allocate_info);
 }
 
 void VulkanApp::CreateSyncObjects() {
     vk::SemaphoreCreateInfo semaphore_create_info {};
-    image_available_semaphores.resize(swapchain->n_image);
-    render_finish_semaphores.resize(swapchain->n_image);
-    for (size_t i = 0; i < swapchain->n_image; i++) {
+    image_available_semaphores.resize(n_inflight_frames);
+    render_finish_semaphores.resize(n_inflight_frames);
+    for (size_t i = 0; i < n_inflight_frames; i++) {
         image_available_semaphores[i] = device->logical_device->createSemaphoreUnique(semaphore_create_info);
         render_finish_semaphores[i] = device->logical_device->createSemaphoreUnique(semaphore_create_info);
     }
 
     vk::FenceCreateInfo fence_create_info(vk::FenceCreateFlagBits::eSignaled);
-    fences.resize(swapchain->n_image);
-    for (size_t i = 0; i < swapchain->n_image; i++) {
+    fences.resize(n_inflight_frames);
+    for (size_t i = 0; i < n_inflight_frames; i++) {
         fences[i] = device->logical_device->createFenceUnique(fence_create_info);
     }
 
