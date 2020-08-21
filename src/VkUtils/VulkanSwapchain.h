@@ -6,7 +6,7 @@ namespace pepcy::vku {
 
 struct Swapchain {
     Swapchain(const Device *device, vk::SurfaceKHR surface, vk::ImageUsageFlags usage,
-              uint32_t width, uint32_t height);
+        uint32_t width, uint32_t height);
 
     vk::UniqueSwapchainKHR swapchain;
     uint32_t n_image;

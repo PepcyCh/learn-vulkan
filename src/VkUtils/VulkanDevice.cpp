@@ -4,8 +4,8 @@
 
 namespace pepcy::vku {
 
-Device::Device(vk::PhysicalDevice physical_device_, const std::vector<const char *> &enabled_layers,
-               const std::vector<const char *> &extensions, const vk::PhysicalDeviceFeatures &features) {
+Device::Device(vk::PhysicalDevice physical_device_, const std::vector<const char *> &extensions,
+    const vk::PhysicalDeviceFeatures &features) {
     assert(physical_device_ && "[vku::Device::Device] Create vku::Device with a null physical device");
     physical_device = physical_device_;
 
@@ -34,11 +34,11 @@ Device::Device(vk::PhysicalDevice physical_device_, const std::vector<const char
     for (size_t i = 0; i < queue_family_indices.size(); i++) {
         float priority = 1.0f;
         queue_create_infos[i].setQueueFamilyIndex(queue_family_indices[i]).setQueueCount(1)
-                             .setPQueuePriorities(&priority);
+            .setPQueuePriorities(&priority);
     }
 
-    vk::DeviceCreateInfo create_info({}, queue_create_infos.size(), queue_create_infos.data(), enabled_layers.size(),
-                                     enabled_layers.data(), extensions.size(), extensions.data(), &features);
+    vk::DeviceCreateInfo create_info({}, queue_create_infos.size(), queue_create_infos.data(),
+        0, nullptr, extensions.size(), extensions.data(), &features);
     logical_device = physical_device.createDeviceUnique(create_info);
 }
 

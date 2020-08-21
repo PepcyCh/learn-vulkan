@@ -43,9 +43,8 @@ std::vector<const char *> GetRequiredExtensions() {
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
-                                             VkDebugUtilsMessageTypeFlagsEXT message_type,
-                                             const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data,
-                                             void* p_user_data) {
+    VkDebugUtilsMessageTypeFlagsEXT message_type, const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data,
+    void* p_user_data) {
     std::cerr << "[validation layer] " << p_callback_data->pMessage << std::endl;
     return VK_FALSE;
 }
@@ -58,7 +57,7 @@ enum PhysicalDeviceScore : uint32_t {
 };
 
 uint32_t GetPhysicalDeviceScore(vk::PhysicalDevice physical_device, vk::SurfaceKHR surface,
-                                           const std::vector<const char *> &required_extensions) {
+    const std::vector<const char *> &required_extensions) {
     // extensions
     auto supported_extensions = physical_device.enumerateDeviceExtensionProperties();
     std::unordered_set<std::string> required_set(required_extensions.begin(), required_extensions.end());
@@ -143,19 +142,18 @@ void VulkanApp::InitializeWindow() {
 
 void VulkanApp::InitializeVulkan() {
     vk::ApplicationInfo app_info("learn_vulkan", VK_MAKE_VERSION(1, 0, 0), "No Engine",
-                                 VK_MAKE_VERSION(1, 0, 0), VK_MAKE_VERSION(1, 0, 0));
+        VK_MAKE_VERSION(1, 0, 0), VK_MAKE_VERSION(1, 0, 0));
     auto extensions = GetRequiredExtensions();
 #if defined(DEBUG) || defined(_DEBUG)
     const std::vector<const char *> layers = { "VK_LAYER_KHRONOS_validation" };
     vk::DebugUtilsMessageSeverityFlagsEXT severity_flags = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
-                                                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eError |
-                                                           vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning;
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::eError | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning;
     vk::DebugUtilsMessageTypeFlagsEXT type_flags = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral |
-                                                   vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-                                                   vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation;
+        vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation;
     vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_create_info({}, severity_flags, type_flags, DebugCallback);
     vk::InstanceCreateInfo instance_create_info({}, &app_info, layers.size(), layers.data(),
-                                                extensions.size(), extensions.data());
+        extensions.size(), extensions.data());
+    instance_create_info.setPNext(&debug_messenger_create_info);
     instance = vk::createInstanceUnique(instance_create_info);
     dldi.init(instance.get(), vkGetInstanceProcAddr);
     debug_messenger = instance->createDebugUtilsMessengerEXTUnique(debug_messenger_create_info, nullptr, dldi);
@@ -166,7 +164,7 @@ void VulkanApp::InitializeVulkan() {
 #endif
     VkSurfaceKHR surface_temp;
     if (glfwCreateWindowSurface(instance.get(), glfw_window, nullptr, &surface_temp) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create window surface");
+        throw std::runtime_error("Failed to create window surface");
     }
     surface = vk::UniqueSurfaceKHR(surface_temp, instance.get());
 
@@ -177,7 +175,6 @@ void VulkanApp::InitializeVulkan() {
 }
 
 void VulkanApp::CreateDevice() {
-    const std::vector<const char *> layers = {};
     const std::vector<const char *> extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
     auto physical_devices = instance->enumeratePhysicalDevices();
@@ -199,7 +196,7 @@ void VulkanApp::CreateDevice() {
         physical_device_features.setSamplerAnisotropy(VK_TRUE);
     }
 
-    device = std::make_unique<vku::Device>(physical_device, layers, extensions, physical_device_features);
+    device = std::make_unique<vku::Device>(physical_device, extensions, physical_device_features);
 
     graphics_queue = device->GraphicsQueue();
     // compute_queue = device->ComputeQueue();
@@ -207,8 +204,8 @@ void VulkanApp::CreateDevice() {
 }
 
 void VulkanApp::CreateSwapchain() {
-    swapchain = std::make_unique<vku::Swapchain>(device.get(), surface.get(), vk::ImageUsageFlagBits::eColorAttachment,
-                                                 client_width, client_height);
+    swapchain = std::make_unique<vku::Swapchain>(device.get(), surface.get(),
+        vk::ImageUsageFlagBits::eColorAttachment, client_width, client_height);
 }
 
 void VulkanApp::CreateCommandObjects() {

@@ -35,10 +35,10 @@ vk::Extent2D ChooseExtant(const vk::SurfaceCapabilitiesKHR &capabilities, uint32
 namespace pepcy::vku {
 
 Swapchain::Swapchain(const Device *device, vk::SurfaceKHR surface, vk::ImageUsageFlags usage,
-     uint32_t width, uint32_t height) : depth_image(device, vk::ImageType::e2D, vk::Format::eD24UnormS8Uint,
-         { width, height, 1 }, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal,
-         vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageLayout::eUndefined,
-         vk::MemoryPropertyFlagBits::eDeviceLocal) {
+    uint32_t width, uint32_t height) : depth_image(device, vk::ImageType::e2D, vk::Format::eD24UnormS8Uint,
+        { width, height, 1 }, 1, 1, vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal,
+        vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::ImageLayout::eUndefined,
+        vk::MemoryPropertyFlagBits::eDeviceLocal) {
     auto capabilities = device->physical_device.getSurfaceCapabilitiesKHR(surface);
     auto surface_formats = device->physical_device.getSurfaceFormatsKHR(surface);
     auto present_modes = device->physical_device.getSurfacePresentModesKHR(surface);
