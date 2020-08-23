@@ -3,8 +3,6 @@
 #include <iostream>
 #include <unordered_set>
 
-#define DEBUG
-
 namespace {
 
 void FrameBufferResizeCallback(GLFWwindow *window, int width, int height) {
@@ -36,7 +34,7 @@ std::vector<const char *> GetRequiredExtensions() {
     uint32_t n_glfw_extensions;
     const char **glfw_extensions = glfwGetRequiredInstanceExtensions(&n_glfw_extensions);
     std::vector<const char *> extensions(glfw_extensions, glfw_extensions + n_glfw_extensions);
-#if defined(DEBUG) || defined(_DEBUG)
+#ifndef NDEBUG
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 #endif
     return extensions;
@@ -144,7 +142,7 @@ void VulkanApp::InitializeVulkan() {
     vk::ApplicationInfo app_info("learn_vulkan", VK_MAKE_VERSION(1, 0, 0), "No Engine",
         VK_MAKE_VERSION(1, 0, 0), VK_MAKE_VERSION(1, 0, 0));
     auto extensions = GetRequiredExtensions();
-#if defined(DEBUG) || defined(_DEBUG)
+#ifndef NDEBUG
     const std::vector<const char *> layers = { "VK_LAYER_KHRONOS_validation" };
     vk::DebugUtilsMessageSeverityFlagsEXT severity_flags = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose |
         vk::DebugUtilsMessageSeverityFlagBitsEXT::eError | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning;
@@ -186,8 +184,9 @@ void VulkanApp::CreateDevice() {
             max_score = score;
             physical_device = temp_device;
         }
-#if defined(DEBUG) || defined(_DEBUG)
+#ifndef NDEBUG
         std::cerr << "physical device name: " << temp_device.getProperties().deviceName << std::endl;
+        std::cerr << "                type: " << vk::to_string(temp_device.getProperties().deviceType) << std::endl;
         std::cerr << "                score: " << score << std::endl;
 #endif
     }
@@ -195,6 +194,7 @@ void VulkanApp::CreateDevice() {
     if (max_score & ePhysicalDeviceSamplerAnisotropy) {
         physical_device_features.setSamplerAnisotropy(VK_TRUE);
     }
+    physical_device_features.setFillModeNonSolid(VK_TRUE);
 
     device = std::make_unique<vku::Device>(physical_device, extensions, physical_device_features);
 

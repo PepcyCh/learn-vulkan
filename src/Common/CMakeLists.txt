@@ -1,4 +1,5 @@
 add_library(vk_common
+    GeometryGenerator.cpp
     MathUtil.cpp
     Timer.cpp
     VulkanApp.cpp

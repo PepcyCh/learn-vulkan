@@ -6,6 +6,9 @@ class MathUtil {
 public:
     inline static const float PI = 3.141592653589793238463f;
     inline static const float PI_INV = 0.3183098861837907f;
+    inline static const float PI2 = 2.0f * PI;
+    inline static const float PI_DIV_2 = 0.5f * PI;
+    inline static const float PI_DIV_4 = 0.25f * PI;
 
     static float Radians(float degree);
     static float Degree(float radians);

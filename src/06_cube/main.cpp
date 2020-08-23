@@ -79,9 +79,9 @@ public:
         BuildRenderPass();
         BuildFramebuffers();
         BuildLayouts();
-        BuildDescriptorSets();
         BuildShaderModules();
         BuildRenderItems();
+        BuildDescriptorPool();
         BuildFrameResources();
         BuildGraphicsPipeline();
 
@@ -271,13 +271,6 @@ private:
         vk::PipelineLayoutCreateInfo pipeline_layout_create_info({}, 1, &descriptor_set_layout.get(), 0, nullptr);
         pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
-    void BuildDescriptorSets() {
-        std::array<vk::DescriptorPoolSize, 1> pool_sizes = {
-            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, swapchain->n_image)
-        };
-        vk::DescriptorPoolCreateInfo create_info({}, swapchain->n_image, pool_sizes.size(), pool_sizes.data());
-        descriptor_pool = device->logical_device->createDescriptorPoolUnique(create_info);
-    }
     void BuildShaderModules() {
         shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "06_cube/shaders/vert.spv",
             device->logical_device.get());
@@ -294,6 +287,13 @@ private:
             vk::BufferUsageFlagBits::eIndexBuffer, cube_indices.size() * sizeof(uint16_t),
             cube_indices.data(), cube->index_staging_buffer, main_command_buffer.get());
         ritem = std::move(cube);
+    }
+    void BuildDescriptorPool() {
+        std::array<vk::DescriptorPoolSize, 1> pool_sizes = {
+            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_inflight_frames)
+        };
+        vk::DescriptorPoolCreateInfo create_info({}, n_inflight_frames, pool_sizes.size(), pool_sizes.data());
+        descriptor_pool = device->logical_device->createDescriptorPoolUnique(create_info);
     }
     void BuildFrameResources() {
         frame_resources.resize(n_inflight_frames);
@@ -343,16 +343,16 @@ private:
         graphics_pipeline = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
     }
 
+    vk::UniqueRenderPass render_pass;
     std::vector<vk::UniqueFramebuffer> frame_buffers;
 
-    vk::UniqueRenderPass render_pass;
-    vk::UniquePipeline graphics_pipeline;
     vk::UniquePipelineLayout pipeline_layout;
     vk::UniqueDescriptorSetLayout descriptor_set_layout;
     vk::UniqueDescriptorPool descriptor_pool;
 
     std::vector<std::unique_ptr<FrameResources>> frame_resources;
 
+    vk::UniquePipeline graphics_pipeline;
     std::unordered_map<std::string, vk::UniqueShaderModule> shader_modules;
 
     float eye_theta = MathUtil::PI * 0.25f;
