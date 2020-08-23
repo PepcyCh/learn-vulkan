@@ -2,6 +2,7 @@
 
 #include "../defines.h"
 #include "VulkanApp.h"
+#include "Wave.h"
 #include "FrameResources.h"
 #include "MathUtil.h"
 #include "VulkanUtil.h"
@@ -14,6 +15,8 @@ namespace {
 struct RenderItem {
     Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
     MeshGeometry *mesh = nullptr;
+    vk::Buffer vertex_buffer;
+    vk::Buffer index_buffer;
     uint32_t n_index = 0;
     uint32_t first_index = 0;
     int vertex_offset = 0;
@@ -21,27 +24,28 @@ struct RenderItem {
     uint32_t n_frame_dirty = 0;
 };
 
-struct Vertex {
-    Eigen::Vector3f pos;
-    Eigen::Vector3f color;
-
-    static vk::VertexInputBindingDescription BindDescription() {
-        return { 0, sizeof(Vertex), vk::VertexInputRate::eVertex };
-    }
-
-    static std::array<vk::VertexInputAttributeDescription, 2> AttributeDescriptions() {
-        return {
-            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos)),
-            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color))
-        };
-    }
+enum class RenderLayer : size_t {
+    Opaque,
+    Count
 };
+
+float GetHillHeight(float x, float z) {
+    return 0.3f * (z * std::sin(0.1f * x) + x * std::cos(0.1f * z));
+}
+Eigen::Vector3f GetHillNormal(float x, float z) {
+    Eigen::Vector3f norm(
+        -0.03f * z * std::cos(0.1f * x) - 0.3f * std::cos(0.1f * z),
+        1.0f,
+        -0.3f * std::sin(0.1f * x) + 0.03f * x * std::sin(0.1f * z)
+    );
+    return norm.normalized();
+}
 
 }
 
-class VulkanAppShapes : public VulkanApp {
+class VulkanAppLandWave : public VulkanApp {
 public:
-    ~VulkanAppShapes() {
+    ~VulkanAppLandWave() {
         if (device) {
             device->logical_device->waitIdle();
         }
@@ -53,11 +57,14 @@ public:
         vk::CommandBufferBeginInfo begin_info(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
         main_command_buffer->begin(begin_info);
 
+        wave = std::make_unique<Wave>(128, 128, 1.0f, 0.03f, 4.0f, 0.2f);
+
         BuildRenderPass();
         BuildFramebuffers();
         BuildLayouts();
         BuildShaderModules();
-        BuildGeometries();
+        BuildLandGeometry();
+        BuildWaveGeometry();
         BuildRenderItems();
         BuildDescriptorPool();
         BuildFrameResources();
@@ -90,7 +97,7 @@ public:
             float dx = 0.005 * (x - last_mouse.x);
             float dy = 0.005 * (y - last_mouse.y);
             eye_radius += dx - dy;
-            eye_radius = std::clamp(eye_radius, 3.0f, 15.0f);
+            eye_radius = std::clamp(eye_radius, 5.0f, 40.0f);
         }
         last_mouse.x = x;
         last_mouse.y = y;
@@ -100,6 +107,7 @@ private:
     void Update() override {
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
+        UpdateWave();
         UpdateObjectUniform();
         UpdatePassUniform();
     }
@@ -144,7 +152,7 @@ private:
             command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
                 graphics_pipelines["normal"].get());
         }
-        DrawItems(opaque_items);
+        DrawItems(items[static_cast<size_t>(RenderLayer::Opaque)]);
 
         command_buffers[curr_frame]->endRenderPass();
         command_buffers[curr_frame]->end();
@@ -179,8 +187,8 @@ private:
                 { curr_fr->obj_descriptor_set[item->obj_index] }, {});
 
             auto mesh = item->mesh;
-            command_buffers[curr_frame]->bindVertexBuffers(0, { mesh->vertex_buffer->buffer.get() }, { 0 });
-            command_buffers[curr_frame]->bindIndexBuffer(mesh->index_buffer->buffer.get(), 0, mesh->index_type);
+            command_buffers[curr_frame]->bindVertexBuffers(0, { item->vertex_buffer }, { 0 });
+            command_buffers[curr_frame]->bindIndexBuffer(item->index_buffer, 0, mesh->index_type);
             command_buffers[curr_frame]->drawIndexed(item->n_index, 1, item->first_index, item->vertex_offset, 0);
         }
     }
@@ -203,6 +211,35 @@ private:
 
         eye = { x, y, z };
         view = MathUtil::LookAt(eye, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+    }
+    void UpdateWave() {
+        // Every quarter second, generate a random wave.
+        static float t_base = 0.0f;
+        if ((this->timer.TotalTime() - t_base) >= 0.25f) {
+            t_base += 0.25f;
+
+            int i = MathUtil::RandI(4, wave->RowCount() - 5);
+            int j = MathUtil::RandI(4, wave->ColumnCount() - 5);
+
+            float r = MathUtil::RandF(0.2f, 0.5f);
+
+            wave->Disturb(i, j, r);
+        }
+
+        // Update the wave simulation.
+        wave->Update(timer.DeltaTime());
+
+        // Update the wave vertex buffer with the new solution.
+        auto wave_vb = curr_fr->wave_vb.get();
+        for (int i = 0; i < wave->VertexCount(); i++) {
+            Vertex v;
+            v.pos = wave->Position(i);
+            v.color = { 0.0f, 0.0f, 1.0f };
+            wave_vb->CopyData(i, v);
+        }
+
+        // Set the dynamic VB of the wave renderitem to the current frame VB.
+        wave_ritem->vertex_buffer = wave_vb->Buffer()->buffer.get();
     }
     void UpdateObjectUniform() {
         for (const auto &item : render_items) {
@@ -284,100 +321,40 @@ private:
         pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
     void BuildShaderModules() {
-        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "07_shapes/shaders/vert.spv",
+        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "07_land_wave/shaders/vert.spv",
             device->logical_device.get());
-        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "07_shapes/shaders/frag.spv",
+        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "07_land_wave/shaders/frag.spv",
             device->logical_device.get());
     }
-    void BuildGeometries() {
+    void BuildLandGeometry() {
         GeometryGenerator geo_gen;
-        GeometryGenerator::MeshData box = geo_gen.Box(1.5f, 0.5f, 1.5f, 3);
-        GeometryGenerator::MeshData grid = geo_gen.Grid(20.0f, 30.0f, 60, 40);
-        GeometryGenerator::MeshData sphere = geo_gen.Sphere(0.5f, 20, 20);
-        GeometryGenerator::MeshData cylinder = geo_gen.Cylinder(0.5f, 0.3f, 3.0f, 20, 20);
-        GeometryGenerator::MeshData geosphere = geo_gen.Geosphere(0.5f, 2);
+        GeometryGenerator::MeshData grid = geo_gen.Grid(160.0f, 160.0f, 50, 50);
 
-        // concatenate all the geometry into one big vertex/index buffer
+        std::vector<Vertex> vertices(grid.vertices.size());
+        for (int i = 0; i < vertices.size(); i++) {
+            const auto &p = grid.vertices[i].pos;
+            vertices[i].pos = p;
+            vertices[i].pos.y() = GetHillHeight(p.x(), p.z());
 
-        // vertex offsets to each object
-        uint32_t box_vertex_offset = 0;
-        uint32_t grid_vertex_offset = box.vertices.size();
-        uint32_t sphere_vertex_offset = grid_vertex_offset + grid.vertices.size();
-        uint32_t cylinder_vertex_offset = sphere_vertex_offset + sphere.vertices.size();
-        uint32_t geosphere_vertex_offset = cylinder_vertex_offset + cylinder.vertices.size();
-
-        // starting index for each object
-        uint32_t box_index_offset = 0;
-        uint32_t grid_index_offset = box.indices32.size();
-        uint32_t sphere_index_offset = grid_index_offset + grid.indices32.size();
-        uint32_t cylinder_index_offset = sphere_index_offset + sphere.indices32.size();
-        uint32_t geosphere_index_offset = cylinder_index_offset + cylinder.indices32.size();
-
-        // define submeshes
-        SubmeshGeometry box_submesh;
-        box_submesh.n_index = box.indices32.size();
-        box_submesh.first_index = box_index_offset;
-        box_submesh.vertex_offset = box_vertex_offset;
-
-        SubmeshGeometry grid_submesh;
-        grid_submesh.n_index = grid.indices32.size();
-        grid_submesh.first_index = grid_index_offset;
-        grid_submesh.vertex_offset = grid_vertex_offset;
-
-        SubmeshGeometry sphere_submesh;
-        sphere_submesh.n_index = sphere.indices32.size();
-        sphere_submesh.first_index = sphere_index_offset;
-        sphere_submesh.vertex_offset = sphere_vertex_offset;
-
-        SubmeshGeometry cylinder_submesh;
-        cylinder_submesh.n_index = cylinder.indices32.size();
-        cylinder_submesh.first_index = cylinder_index_offset;
-        cylinder_submesh.vertex_offset = cylinder_vertex_offset;
-
-        SubmeshGeometry geosphere_submesh;
-        geosphere_submesh.n_index = geosphere.indices32.size();
-        geosphere_submesh.first_index = geosphere_index_offset;
-        geosphere_submesh.vertex_offset = geosphere_vertex_offset;
-
-        // extract the vertex elements we are interested in and pack the
-        // vertices of all the meshes into one vertex buffer.
-        auto total_vertex_cnt = box.vertices.size() + grid.vertices.size() +
-            sphere.vertices.size() + cylinder.vertices.size() + geosphere.vertices.size();
-        std::vector<Vertex> vertices(total_vertex_cnt);
-        uint32_t k = 0;
-        for (size_t i = 0; i < box.vertices.size(); i++, k++) {
-            vertices[k].pos = box.vertices[i].pos;
-            vertices[k].color = { 0.1f, 0.4f, 0.1f };
+            if (vertices[i].pos.y() < -10.0f) {
+                vertices[i].color = { 1.0f, 0.96f, 0.62f };
+            } else if (vertices[i].pos.y() < 5.0f) {
+                vertices[i].color = { 0.48f, 0.77f, 0.46f };
+            } else if (vertices[i].pos.y() < 12.0f) {
+                vertices[i].color = { 0.1f, 0.48f, 0.19f };
+            } else if (vertices[i].pos.y() < 20.0f) {
+                vertices[i].color = { 0.45f, 0.39f, 0.34f };
+            } else {
+                vertices[i].color = { 1.0f, 1.0f, 1.0f };
+            }
         }
-        for (size_t i = 0; i < grid.vertices.size(); i++, k++) {
-            vertices[k].pos = grid.vertices[i].pos;
-            vertices[k].color = { 0.3f, 0.6f, 0.2f };
-        }
-        for (size_t i = 0; i < sphere.vertices.size(); i++, k++) {
-            vertices[k].pos = sphere.vertices[i].pos;
-            vertices[k].color = { 0.9f, 0.2f, 0.2f };
-        }
-        for (size_t i = 0; i < cylinder.vertices.size(); i++, k++) {
-            vertices[k].pos = cylinder.vertices[i].pos;
-            vertices[k].color = { 0.2f, 0.3f, 0.7f };
-        }
-        for (size_t i = 0; i < geosphere.vertices.size(); i++, k++) {
-            vertices[k].pos = geosphere.vertices[i].pos;
-            vertices[k].color = { 0.9f, 0.2f, 0.9f };
-        }
-
-        std::vector<uint16_t> indices;
-        indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
-        indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
-        indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
-        indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
-        indices.insert(indices.end(), std::begin(geosphere.GetIndices16()), std::end(geosphere.GetIndices16()));
+        std::vector<uint16_t> indices = grid.GetIndices16();
 
         uint32_t vb_size = vertices.size() * sizeof(Vertex);
-        uint32_t ib_size = indices.size()  * sizeof(uint16_t);
+        uint32_t ib_size = indices.size() * sizeof(uint16_t);
 
         auto geo = std::make_unique<MeshGeometry>();
-        geo->name = "shape_geo";
+        geo->name = "land_geo";
 
         geo->vertex_data.resize(vb_size);
         memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
@@ -394,83 +371,83 @@ private:
         geo->index_type = vk::IndexType::eUint16;
         geo->ib_size = ib_size;
 
-        geo->draw_args["box"] = box_submesh;
-        geo->draw_args["grid"] = grid_submesh;
-        geo->draw_args["sphere"] = sphere_submesh;
-        geo->draw_args["cylinder"] = cylinder_submesh;
-        geo->draw_args["geosphere"] = geosphere_submesh;
+        SubmeshGeometry submesh;
+        submesh.n_index = indices.size();
+        submesh.first_index = 0;
+        submesh.vertex_offset = 0;
+        geo->draw_args["grid"] = submesh;
 
-        geometries[geo->name] = std::move(geo);
+        geometries["land_geo"] = std::move(geo);
+    }
+    void BuildWaveGeometry() {
+        std::vector<uint16_t> indices(3 * wave->TriangleCount());
+        assert(wave->VertexCount() < 0x0000ffff);
+
+        int m = wave->RowCount();
+        int n = wave->ColumnCount();
+        int k = 0;
+        for (int i = 0; i < m - 1; i++) {
+            for (int j = 0; j < n - 1; j++) {
+                indices[k] = i * n + j;
+                indices[k + 1] = i * n + j + 1;
+                indices[k + 2] = (i + 1) * n + j;
+                indices[k + 3] = (i + 1) * n + j;
+                indices[k + 4] = i * n + j + 1;
+                indices[k + 5] = (i + 1) * n + j + 1;
+                k += 6;
+            }
+        }
+
+        uint32_t vb_size = wave->VertexCount() * sizeof(Vertex);
+        uint32_t ib_size = indices.size() * sizeof(uint16_t);
+
+        auto geo = std::make_unique<MeshGeometry>();
+        geo->name = "water_geo";
+
+        geo->index_data.resize(ib_size);
+        memcpy(geo->index_data.data(), indices.data(), ib_size);
+        geo->index_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eIndexBuffer,
+            ib_size, indices.data(), geo->index_staging_buffer, main_command_buffer.get());
+
+        geo->vertex_stride = sizeof(Vertex);
+        geo->vb_size = vb_size;
+        geo->index_type = vk::IndexType::eUint16;
+        geo->ib_size = ib_size;
+
+        SubmeshGeometry submesh;
+        submesh.n_index = indices.size();
+        submesh.first_index = 0;
+        submesh.vertex_offset = 0;
+        geo->draw_args["grid"] = submesh;
+
+        geometries["water_geo"] = std::move(geo);
     }
     void BuildRenderItems() {
         uint32_t obj_index = 0;
 
-        auto box_item = std::make_unique<RenderItem>();
-        box_item->obj_index = obj_index++;
-        box_item->n_frame_dirty = n_inflight_frames;
-        box_item->model = MathUtil::Translate({ 0.0f, 0.5f, 0.0f }) * MathUtil::Scale({ 2.0f, 2.0f, 2.0f });
-        box_item->mesh = geometries["shape_geo"].get();
-        box_item->n_index = box_item->mesh->draw_args["box"].n_index;
-        box_item->first_index = box_item->mesh->draw_args["box"].first_index;
-        box_item->vertex_offset = box_item->mesh->draw_args["box"].vertex_offset;
-        render_items.emplace_back(std::move(box_item));
+        auto wave_ritem = std::make_unique<RenderItem>();
+        wave_ritem->obj_index = obj_index++;
+        wave_ritem->n_frame_dirty = n_inflight_frames;
+        wave_ritem->mesh = geometries["water_geo"].get();
+        wave_ritem->index_buffer = wave_ritem->mesh->index_buffer->buffer.get();
+        wave_ritem->n_index = wave_ritem->mesh->draw_args["grid"].n_index;
+        wave_ritem->first_index = wave_ritem->mesh->draw_args["grid"].first_index;
+        wave_ritem->vertex_offset = wave_ritem->mesh->draw_args["grid"].vertex_offset;
+        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(wave_ritem.get());
+        this->wave_ritem = wave_ritem.get();
+        render_items.emplace_back(std::move(wave_ritem));
 
-        auto grid_item = std::make_unique<RenderItem>();
-        grid_item->obj_index = obj_index++;
-        grid_item->n_frame_dirty = n_inflight_frames;
-        grid_item->mesh = geometries["shape_geo"].get();
-        grid_item->n_index = grid_item->mesh->draw_args["grid"].n_index;
-        grid_item->first_index = grid_item->mesh->draw_args["grid"].first_index;
-        grid_item->vertex_offset = grid_item->mesh->draw_args["grid"].vertex_offset;
-        render_items.emplace_back(std::move(grid_item));
-
-        for (int i = 0; i < 5; i++) {
-            auto left_cylinder_item = std::make_unique<RenderItem>();
-            auto right_cylinder_item = std::make_unique<RenderItem>();
-            auto left_sphere_item = std::make_unique<RenderItem>();
-            auto right_sphere_item = std::make_unique<RenderItem>();
-
-            left_cylinder_item->obj_index = obj_index++;
-            left_cylinder_item->n_frame_dirty = n_inflight_frames;
-            left_cylinder_item->model = MathUtil::Translate({ -5.0f, 1.5f, -10.0f + i * 5.0f });
-            left_cylinder_item->mesh = geometries["shape_geo"].get();
-            left_cylinder_item->n_index = left_cylinder_item->mesh->draw_args["cylinder"].n_index;
-            left_cylinder_item->first_index = left_cylinder_item->mesh->draw_args["cylinder"].first_index;
-            left_cylinder_item->vertex_offset = left_cylinder_item->mesh->draw_args["cylinder"].vertex_offset;
-
-            right_cylinder_item->obj_index = obj_index++;
-            right_cylinder_item->n_frame_dirty = n_inflight_frames;
-            right_cylinder_item->model = MathUtil::Translate({ 5.0f, 1.5f, -10.0f + i * 5.0f });
-            right_cylinder_item->mesh = geometries["shape_geo"].get();
-            right_cylinder_item->n_index = right_cylinder_item->mesh->draw_args["cylinder"].n_index;
-            right_cylinder_item->first_index = right_cylinder_item->mesh->draw_args["cylinder"].first_index;
-            right_cylinder_item->vertex_offset = right_cylinder_item->mesh->draw_args["cylinder"].vertex_offset;
-
-            left_sphere_item->obj_index = obj_index++;
-            left_sphere_item->n_frame_dirty = n_inflight_frames;
-            left_sphere_item->model = MathUtil::Translate({ -5.0f, 3.5f, -10.0f + i * 5.0f });
-            left_sphere_item->mesh = geometries["shape_geo"].get();
-            left_sphere_item->n_index = left_sphere_item->mesh->draw_args["sphere"].n_index;
-            left_sphere_item->first_index = left_sphere_item->mesh->draw_args["sphere"].first_index;
-            left_sphere_item->vertex_offset = left_sphere_item->mesh->draw_args["sphere"].vertex_offset;
-
-            right_sphere_item->obj_index = obj_index++;
-            right_sphere_item->n_frame_dirty = n_inflight_frames;
-            right_sphere_item->model = MathUtil::Translate({ 5.0f, 3.5f, -10.0f + i * 5.0f });
-            right_sphere_item->mesh = geometries["shape_geo"].get();
-            right_sphere_item->n_index = right_sphere_item->mesh->draw_args["geosphere"].n_index;
-            right_sphere_item->first_index = right_sphere_item->mesh->draw_args["geosphere"].first_index;
-            right_sphere_item->vertex_offset = right_sphere_item->mesh->draw_args["geosphere"].vertex_offset;
-
-            render_items.emplace_back(std::move(left_cylinder_item));
-            render_items.emplace_back(std::move(right_cylinder_item));
-            render_items.emplace_back(std::move(left_sphere_item));
-            render_items.emplace_back(std::move(right_sphere_item));
-        }
-
-        for (const auto &item : render_items) {
-            opaque_items.push_back(item.get());
-        }
+        auto grid_ritem = std::make_unique<RenderItem>();
+        grid_ritem->obj_index = obj_index++;
+        grid_ritem->n_frame_dirty = n_inflight_frames;
+        grid_ritem->mesh = geometries["land_geo"].get();
+        grid_ritem->vertex_buffer = grid_ritem->mesh->vertex_buffer->buffer.get();
+        grid_ritem->index_buffer = grid_ritem->mesh->index_buffer->buffer.get();
+        grid_ritem->n_index = grid_ritem->mesh->draw_args["grid"].n_index;
+        grid_ritem->first_index = grid_ritem->mesh->draw_args["grid"].first_index;
+        grid_ritem->vertex_offset= grid_ritem->mesh->draw_args["grid"].vertex_offset;
+        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(grid_ritem.get());
+        render_items.emplace_back(std::move(grid_ritem));
     }
     void BuildDescriptorPool() {
         std::array<vk::DescriptorPoolSize, 2> pool_sizes = {
@@ -485,7 +462,8 @@ private:
         frame_resources.resize(n_inflight_frames);
         for (size_t i = 0; i < n_inflight_frames; i++) {
             frame_resources[i] = std::make_unique<FrameResources>(device.get(), descriptor_pool.get(),
-                descriptor_set_layouts[0].get(), descriptor_set_layouts[1].get(), render_items.size());
+                descriptor_set_layouts[0].get(), descriptor_set_layouts[1].get(), render_items.size(),
+                wave->VertexCount());
         }
         curr_fr = frame_resources[curr_frame = 0].get();
     }
@@ -572,12 +550,13 @@ private:
     std::unordered_map<std::string, vk::UniquePipeline> graphics_pipelines;
     std::unordered_map<std::string, vk::UniqueShaderModule> shader_modules;
     std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> geometries;
+    std::unique_ptr<Wave> wave;
 
     PassUB main_pass_ub;
 
     float eye_theta = MathUtil::PI_DIV_4;
     float eye_phi = MathUtil::PI_DIV_4;
-    float eye_radius = 5.0f;
+    float eye_radius = 15.0f;
     Eigen::Vector3f eye = { 0.0f, 0.0f, 0.0f };
     Eigen::Matrix4f proj = Eigen::Matrix4f::Identity();
     Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
@@ -588,14 +567,15 @@ private:
     } last_mouse;
 
     std::vector<std::unique_ptr<RenderItem>> render_items;
-    std::vector<RenderItem *> opaque_items;
+    std::vector<RenderItem *> items[static_cast<size_t>(RenderLayer::Count)];
+    RenderItem *wave_ritem;
 
     bool wireframe = false;
 };
 
 int main() {
     try {
-        VulkanAppShapes app;
+        VulkanAppLandWave app;
         app.Initialize();
         app.MainLoop();
     } catch (const std::runtime_error &e) {

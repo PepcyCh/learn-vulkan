@@ -8,3 +8,4 @@ add_subdirectory(VkUtils)
 
 add_subdirectory(06_cube)
 add_subdirectory(07_shapes)
+add_subdirectory(07_land_wave)

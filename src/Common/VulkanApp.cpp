@@ -264,19 +264,19 @@ void VulkanApp::OnKey(int key, int action) {
 }
 
 void VulkanApp::CalcFrameStats() {
-    static int frame_cnt = 0;
+    static uint32_t frame_cnt = 0;
     static double time_elapsed = 0.0;
 
     ++frame_cnt;
     double delta = timer.TotalTime() - time_elapsed;
     if (delta >= 1.0) {
         double fps = frame_cnt / delta;
-        double mspf = 1000.0 / frame_cnt;
+        double mspf = 1000.0 * delta / frame_cnt;
         std::string fps_str = std::to_string(fps);
         std::string mspf_str = std::to_string(mspf);
         std::string text = window_title + "  fps:" + fps_str + "  mspf:" + mspf_str;
         glfwSetWindowTitle(glfw_window, text.c_str());
         frame_cnt = 0;
-        time_elapsed += 1.0;
+        time_elapsed += delta;
     }
 }

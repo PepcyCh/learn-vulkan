@@ -16,7 +16,7 @@ double Timer::TotalTime() {
 
 void Timer::Reset() {
     stopped = false;
-    base_time = std::chrono::high_resolution_clock::now();
+    prev_time = base_time = std::chrono::high_resolution_clock::now();
     delta_time = paused_time = 0.0;
 }
 

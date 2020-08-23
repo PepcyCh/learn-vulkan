@@ -54,3 +54,20 @@ Eigen::Matrix4f MathUtil::Perspective(float fov, float aspect, float near, float
     }
     return m;
 }
+
+int MathUtil::RandI(int l, int r) {
+    if (!rnd_init) {
+        rnd_gen.seed(rnd_dv());
+        rnd_init = true;
+    }
+    std::uniform_int_distribution<> rnd_int(l, r);
+    return rnd_int(rnd_gen);
+}
+float MathUtil::RandF(float l, float r) {
+    if (!rnd_init) {
+        rnd_gen.seed(rnd_dv());
+        rnd_init = true;
+    }
+    std::uniform_real_distribution<> rnd_real(l, r);
+    return rnd_real(rnd_gen);
+}
