@@ -6,11 +6,11 @@
 
 class MathUtil {
 public:
-    inline static const float PI = 3.141592653589793238463f;
-    inline static const float PI_INV = 0.3183098861837907f;
-    inline static const float PI2 = 2.0f * PI;
-    inline static const float PI_DIV_2 = 0.5f * PI;
-    inline static const float PI_DIV_4 = 0.25f * PI;
+    inline static const float kPi = 3.141592653589793238463f;
+    inline static const float kPiInv = 0.3183098861837907f;
+    inline static const float k2Pi = 2.0f * kPi;
+    inline static const float kPiDiv2 = 0.5f * kPi;
+    inline static const float kPiDiv4 = 0.25f * kPi;
 
     static float Radians(float degree);
     static float Degree(float radians);
@@ -26,6 +26,14 @@ public:
 
     static int RandI(int l, int r);
     static float RandF(float l, float r);
+
+    static Eigen::Vector3f Spherical2Cartesian(float radius, float theta, float phi) {
+        return {
+            radius * std::sin(phi) * std::cos(theta),
+            radius * std::cos(phi),
+            radius * std::sin(phi) * std::sin(theta)
+        };
+    }
 
 private:
     inline static bool rnd_init = false;

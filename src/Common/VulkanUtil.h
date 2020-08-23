@@ -4,6 +4,7 @@
 #include <unordered_map>
 
 #include "VulkanBuffer.h"
+#include "Eigen/Dense"
 
 using namespace pepcy;
 
@@ -40,4 +41,31 @@ struct MeshGeometry {
     uint32_t ib_size;
 
     std::unordered_map<std::string, SubmeshGeometry> draw_args;
+};
+
+struct Light {
+    Eigen::Vector3f strength = { 0.0f, 0.0f, 0.0f };
+    float falloff_start = 0.0f;
+    Eigen::Vector3f direction = { 0.0f, 0.0f, 0.0f };
+    float falloff_end = 0.0f;
+    Eigen::Vector3f position = { 0.0f, 0.0f, 0.0f };
+    float spot_power = 0.0f;
+};
+const size_t kMaxLights = 16;
+
+struct alignas(64) MaterialUB {
+    Eigen::Vector4f albedo = { 0.0f, 0.0f, 0.0f, 1.0f };
+    Eigen::Vector3f fresnel_r0 = { 0.0f, 0.0f, 0.0f };
+    float roughness = 0.0f;
+    Eigen::Matrix4f mat_transform = Eigen::Matrix4f::Identity();
+};
+
+struct Material {
+    std::string name;
+    uint32_t n_frame_dirty = 0;
+    size_t mat_index = 0;
+    Eigen::Vector4f albedo = { 0.0f, 0.0f, 0.0f, 1.0f };
+    Eigen::Vector3f fresnel_r0 = { 0.0f, 0.0f, 0.0f };
+    float roughness = 0.0f;
+    Eigen::Matrix4f mat_transform = Eigen::Matrix4f::Identity();
 };

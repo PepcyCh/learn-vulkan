@@ -71,8 +71,8 @@ GeometryGenerator::Sphere(float radius, uint32_t n_slice, uint32_t n_stack) {
 
     mesh.vertices.push_back(top);
 
-    float dphi = MathUtil::PI / n_stack;
-    float dtheta = 2.0f * MathUtil::PI / n_slice;
+    float dphi = MathUtil::kPi / n_stack;
+    float dtheta = 2.0f * MathUtil::kPi / n_slice;
 
     for (uint32_t i = 1; i < n_stack; i++) {
         float phi = dphi * i;
@@ -91,8 +91,8 @@ GeometryGenerator::Sphere(float radius, uint32_t n_slice, uint32_t n_stack) {
             v.tan.y() = 0.0f;
             v.tan.z() = ctheta;
             v.norm = v.pos.normalized();
-            v.texc.x() = theta / MathUtil::PI2;
-            v.texc.y() = phi / MathUtil::PI;
+            v.texc.x() = theta / MathUtil::k2Pi;
+            v.texc.y() = phi / MathUtil::kPi;
 
             mesh.vertices.push_back(v);
         }
@@ -168,11 +168,11 @@ GeometryGenerator::Geosphere(float radius, uint32_t n_subdiv) {
 
         float theta = std::atan2(vertex.pos.z(), vertex.pos.x());
         if (theta < 0) {
-            theta += 2.0f * MathUtil::PI2;
+            theta += 2.0f * MathUtil::k2Pi;
         }
         float phi = std::acos(vertex.pos.y() / radius);
-        vertex.texc.x() = theta / MathUtil::PI2;
-        vertex.texc.y() = phi / MathUtil::PI;
+        vertex.texc.x() = theta / MathUtil::k2Pi;
+        vertex.texc.y() = phi / MathUtil::kPi;
         vertex.tan.x() = -std::sin(theta);
         vertex.tan.y() = 0;
         vertex.tan.z() = std::cos(theta);
@@ -191,7 +191,7 @@ GeometryGenerator::Cylinder(float bottom_radius, float top_radius, float h, uint
     for (uint32_t i = 0; i <= n_stack; i++) {
         float y = -0.5f * h + dh * i;
         float r = bottom_radius + dr * i;
-        float dtheta = MathUtil::PI2 / n_slice;
+        float dtheta = MathUtil::k2Pi / n_slice;
         for (uint32_t j = 0; j <= n_slice; j++) {
             float theta = dtheta * j;
             float s = std::sin(theta);
@@ -344,7 +344,7 @@ GeometryGenerator::Vertex GeometryGenerator::Midpoint(const Vertex &v0, const Ve
 void GeometryGenerator::BuildCylinderBottomCap(float br, float tr, float h, uint32_t n_slice, uint32_t n_stack,
     MeshData &mesh) {
     uint32_t base = mesh.vertices.size();
-    float dtheta = MathUtil::PI2 / n_slice;
+    float dtheta = MathUtil::k2Pi / n_slice;
     float y = -h * 0.5f;
     for (uint32_t i = 0; i <= n_slice; i++) {
         float theta = dtheta * i;
@@ -366,7 +366,7 @@ void GeometryGenerator::BuildCylinderBottomCap(float br, float tr, float h, uint
 void GeometryGenerator::BuildCylinderTopCap(float br, float tr, float h, uint32_t n_slice, uint32_t n_stack,
     MeshData &mesh) {
     uint32_t base = mesh.vertices.size();
-    float dtheta = MathUtil::PI2 / n_slice;
+    float dtheta = MathUtil::k2Pi / n_slice;
     float y = h * 0.5f;
     for (uint32_t i = 0; i <= n_slice; i++) {
         float theta = dtheta * i;

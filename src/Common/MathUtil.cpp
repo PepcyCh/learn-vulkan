@@ -1,10 +1,10 @@
 #include "MathUtil.h"
 
 float MathUtil::Radians(float degree) {
-    return degree / 180.0f * PI;
+    return degree / 180.0f * kPi;
 }
 float MathUtil::Degree(float radians) {
-    return radians / PI * 180.0f;
+    return radians / kPi * 180.0f;
 }
 float MathUtil::Lerp(float a, float b, float t) {
     return a + t * (b - a);

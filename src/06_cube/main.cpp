@@ -91,7 +91,7 @@ public:
         graphics_queue.submit({ submit_info }, {});
         graphics_queue.waitIdle();
 
-        proj = MathUtil::Perspective(MathUtil::PI * 0.25f, Aspect(), 0.1f, 500.0f, true);
+        proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
     void OnKey(int key, int action) override {
         VulkanApp::OnKey(key, action);
@@ -102,7 +102,7 @@ public:
             float dy = MathUtil::Radians(0.25 * (y - last_mouse.y));
             eye_theta -= dx;
             eye_phi += dy;
-            eye_phi = std::clamp(eye_phi, 0.1f, MathUtil::PI - 0.1f);
+            eye_phi = std::clamp(eye_phi, 0.1f, MathUtil::kPi - 0.1f);
         } else if (state & 2) {
             float dx = 0.005 * (x - last_mouse.x);
             float dy = 0.005 * (y - last_mouse.y);
@@ -193,7 +193,7 @@ private:
         }
         BuildFramebuffers();
 
-        proj = MathUtil::Perspective(MathUtil::PI * 0.25f, Aspect(), 0.1f, 500.0f, true);
+        proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
 
     void UpdateCamera() {
@@ -355,8 +355,8 @@ private:
     vk::UniquePipeline graphics_pipeline;
     std::unordered_map<std::string, vk::UniqueShaderModule> shader_modules;
 
-    float eye_theta = MathUtil::PI * 0.25f;
-    float eye_phi = MathUtil::PI * 0.25f;
+    float eye_theta = MathUtil::kPi * 0.25f;
+    float eye_phi = MathUtil::kPi * 0.25f;
     float eye_radius = 5.0f;
     Eigen::Vector3f eye = { 0.0f, 0.0f, 0.0f };
     Eigen::Matrix4f proj = Eigen::Matrix4f::Identity();
