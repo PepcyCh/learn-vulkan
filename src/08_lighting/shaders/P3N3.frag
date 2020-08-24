@@ -1,6 +1,6 @@
 #version 450
 
-layout(location = 0) in struct FragIn {
+layout(location = 0) in FragIn {
     vec3 pos;
     vec3 norm;
 } fin;
@@ -30,6 +30,10 @@ struct Material {
 };
 
 #define kMaxLight 16
+#define kDirLightCount 1
+#define kPointLightCount 0
+#define kSpotLightCount 0
+
 layout(set = 2, binding = 1) uniform PassUniform {
     vec3 eye;
     float _0;
@@ -127,9 +131,8 @@ void main() {
     vec4 ambient = pass.ambient * mat.albedo;
     float shininess = 1.0f - mat.roughness;
     Material mat = { mat.albedo, mat.fresnel_r0, shininess };
-    vec4 light_res = ComputeLight(pass.lights, mat, fin.pos, fin.norm, view);
-    vec4 res = light_res + pass.ambient;
-    res = res * res; // gamma
+    vec4 light_res = ComputeLight(pass.lights, mat, fin.pos, norm, view);
+    vec4 res = light_res + ambient;
     res.a = mat.albedo.a;
     out_color = res;
 }

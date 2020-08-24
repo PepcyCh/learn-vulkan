@@ -472,6 +472,7 @@ private:
         grass->mat_index = mat_index++;
         grass->n_frame_dirty = n_inflight_frames;
         grass->albedo = { 0.2f, 0.6f, 0.2f, 1.0f };
+        grass->albedo = grass->albedo.array().pow(2.2f); // gamma
         grass->fresnel_r0 = { 0.01f, 0.01f, 0.01f };
         grass->roughness = 0.125f;
         materials[grass->name] = std::move(grass);
@@ -481,6 +482,7 @@ private:
         water->mat_index = mat_index++;
         water->n_frame_dirty = n_inflight_frames;
         water->albedo = { 0.0f, 0.2f, 0.6f, 1.0f };
+        water->albedo = water->albedo.array().pow(2.2f); // gamma
         water->fresnel_r0 = { 0.1f, 0.1f, 0.1f };
         water->roughness = 0.0f;
         materials[water->name] = std::move(water);

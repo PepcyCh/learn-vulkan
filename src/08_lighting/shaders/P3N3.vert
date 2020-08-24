@@ -3,7 +3,7 @@
 layout(location = 0) in vec3 vin_pos;
 layout(location = 1) in vec3 vin_norm;
 
-layout(location = 0) out struct VertexOut {
+layout(location = 0) out VertexOut {
     vec3 pos;
     vec3 norm;
 } vout;
