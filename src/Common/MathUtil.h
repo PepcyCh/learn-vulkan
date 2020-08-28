@@ -16,9 +16,13 @@ public:
     static float Degree(float radians);
     static float Lerp(float a, float b, float t);
 
+    static Eigen::Vector3f TransformPoint(const Eigen::Matrix4f &mat, const Eigen::Vector3f &point);
+    static Eigen::Vector3f TransformVector(const Eigen::Matrix4f &mat, const Eigen::Vector3f &vec);
+
     static Eigen::Matrix4f AngelAxis(float angel, const Eigen::Vector3f &axis);
     static Eigen::Matrix4f Scale(const Eigen::Vector3f &scale);
     static Eigen::Matrix4f Translate(const Eigen::Vector3f &trans);
+    static Eigen::Matrix4f Reflect(const Eigen::Vector4f &plane);
 
     static Eigen::Matrix4f LookAt(const Eigen::Vector3f &eye, const Eigen::Vector3f &look_at,
                                   const Eigen::Vector3f &up);

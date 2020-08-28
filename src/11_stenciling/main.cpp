@@ -1,8 +1,8 @@
 #include <iostream>
+#include <fstream>
 
 #include "../defines.h"
 #include "VulkanApp.h"
-#include "Wave.h"
 #include "FrameResources.h"
 #include "MathUtil.h"
 #include "VulkanUtil.h"
@@ -28,7 +28,8 @@ struct RenderItem {
 
 enum class RenderLayer : size_t {
     Opaque,
-    AlphaTest,
+    Mirror,
+    Reflected,
     Transparent,
     Count
 };
@@ -47,9 +48,9 @@ Eigen::Vector3f GetHillNormal(float x, float z) {
 
 }
 
-class VulkanAppBlending : public VulkanApp {
+class VulkanAppStenciling : public VulkanApp {
 public:
-    ~VulkanAppBlending() {
+    ~VulkanAppStenciling() {
         if (device) {
             device->logical_device->waitIdle();
         }
@@ -61,15 +62,12 @@ public:
         vk::CommandBufferBeginInfo begin_info(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
         main_command_buffer->begin(begin_info);
 
-        wave = std::make_unique<Wave>(128, 128, 1.0f, 0.03f, 4.0f, 0.2f);
-
         BuildRenderPass();
         BuildFramebuffers();
         BuildLayouts();
         BuildShaderModules();
-        BuildLandGeometry();
-        BuildWaveGeometry();
-        BuildBoxGeometry();
+        BuildRoomGeometry();
+        BuildSkullGeometry();
         BuildSamplers();
         BuildTextures();
         BuildMaterials();
@@ -89,6 +87,24 @@ public:
     }
     void OnKey(int key, int action) override {
         VulkanApp::OnKey(key, action);
+
+        float dt = timer.DeltaTime();
+        if (key == GLFW_KEY_A && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+            skull_translation.x() += 10.f * dt;
+        } else if (key == GLFW_KEY_D && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+            skull_translation.x() -= 10.f * dt;
+        } else if (key == GLFW_KEY_W && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+            skull_translation.y() += 10.f * dt;
+        } else if (key == GLFW_KEY_S && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+            skull_translation.y() -= 10.f * dt;
+        }
+        skull_translation.y() = std::max(skull_translation.y(), 0.0f);
+
+        Eigen::Matrix4f trans = MathUtil::Translate(skull_translation) * skull_rotation * skull_scaling;
+        skull_ritem->model = trans;
+        skull_ritem->n_frame_dirty = n_inflight_frames;
+        reflected_skull_ritem->model = MathUtil::Reflect({ 0.0f, 0.0f, 1.0f, 0.0f }) * trans;
+        reflected_skull_ritem->n_frame_dirty = n_inflight_frames;
     }
     void OnMouse(double x, double y, uint32_t state) override {
         if (state & 1) {
@@ -112,7 +128,6 @@ private:
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
         AnimateMaterials();
-        UpdateWave();
         UpdateObjectUniform();
         UpdatePassUniform();
         UpdateMaterialUniform();
@@ -155,9 +170,17 @@ private:
         DrawItems(items[static_cast<size_t>(RenderLayer::Opaque)]);
 
         command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
-            graphics_pipelines["alpha_test"].get());
-        DrawItems(items[static_cast<size_t>(RenderLayer::AlphaTest)]);
+            graphics_pipelines["mirror"].get());
+        DrawItems(items[static_cast<size_t>(RenderLayer::Mirror)]);
 
+        command_buffers[curr_frame]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout.get(), 3,
+            { curr_fr->pass_set[1] }, {});
+        command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
+            graphics_pipelines["reflected"].get());
+        DrawItems(items[static_cast<size_t>(RenderLayer::Reflected)]);
+
+        command_buffers[curr_frame]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout.get(), 3,
+            { curr_fr->pass_set[0] }, {});
         command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
             graphics_pipelines["transparent"].get());
         DrawItems(items[static_cast<size_t>(RenderLayer::Transparent)]);
@@ -214,20 +237,7 @@ private:
     }
 
     void AnimateMaterials() {
-        auto water_mat = materials["water"].get();
-        float u = water_mat->mat_transform(0, 3);
-        float v = water_mat->mat_transform(1, 3);
-        u += 0.1f * timer.DeltaTime();
-        v += 0.02f * timer.DeltaTime();
-        if (u >= 1.0f) {
-            u -= 1.0f;
-        }
-        if (v >= 1.0f) {
-            v -= 1.0f;
-        }
-        water_mat->mat_transform(0, 3) = u;
-        water_mat->mat_transform(1, 3) = v;
-        water_mat->n_frame_dirty = n_inflight_frames;
+        ;
     }
     void UpdateCamera() {
         float x = eye_radius * std::sin(eye_phi) * std::cos(eye_theta);
@@ -236,36 +246,6 @@ private:
 
         eye = { x, y, z };
         view = MathUtil::LookAt(eye, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
-    }
-    void UpdateWave() {
-        // Every quarter second, generate a random wave.
-        static float t_base = 0.0f;
-        if ((this->timer.TotalTime() - t_base) >= 0.25f) {
-            t_base += 0.25f;
-
-            int i = MathUtil::RandI(4, wave->RowCount() - 5);
-            int j = MathUtil::RandI(4, wave->ColumnCount() - 5);
-
-            float r = MathUtil::RandF(0.2f, 0.5f);
-
-            wave->Disturb(i, j, r);
-        }
-
-        // Update the wave simulation.
-        wave->Update(timer.DeltaTime());
-
-        // Update the wave vertex buffer with the new solution.
-        auto wave_vb = curr_fr->wave_vb.get();
-        for (int i = 0; i < wave->VertexCount(); i++) {
-            Vertex v;
-            v.pos = wave->Position(i);
-            v.norm = wave->Normal(i);
-            v.texc = { 0.5f + v.pos.x() / wave->Width(), 0.5f + v.pos.z() / wave->Depth() };
-            wave_vb->CopyData(i, v);
-        }
-
-        // Set the dynamic VB of the wave renderitem to the current frame VB.
-        wave_ritem->vertex_buffer = wave_vb->Buffer()->buffer.get();
     }
     void UpdateObjectUniform() {
         for (const auto &item : render_items) {
@@ -283,6 +263,7 @@ private:
         main_vert_pass_ub.proj = proj;
         main_vert_pass_ub.view = view;
         curr_fr->vert_pass_ub->CopyData(0, main_vert_pass_ub);
+        curr_fr->vert_pass_ub->CopyData(1, main_vert_pass_ub);
 
         main_frag_pass_ub.eye = eye;
         main_frag_pass_ub.near = eye_near;
@@ -297,6 +278,14 @@ private:
         main_frag_pass_ub.lights[2].direction = { 0.0f, -0.707f, -0.707f };
         main_frag_pass_ub.lights[2].strength = { 0.2f, 0.2f, 0.2f };
         curr_fr->frag_pass_ub->CopyData(0, main_frag_pass_ub);
+
+        reflected_frag_pass_ub = main_frag_pass_ub;
+        auto reflect_mat = MathUtil::Reflect({ 0.0f, 0.0f, 1.0f, 0.0f });
+        for (size_t i = 0; i < 3; i++) {
+            reflected_frag_pass_ub.lights[i].direction = MathUtil::TransformVector(reflect_mat,
+                reflected_frag_pass_ub.lights[i].direction);
+        }
+        curr_fr->frag_pass_ub->CopyData(1, reflected_frag_pass_ub);
     }
     void UpdateMaterialUniform() {
         for (const auto &[_, mat] : materials) {
@@ -395,32 +384,136 @@ private:
         pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
     void BuildShaderModules() {
-        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "10_blending/shaders/vert.spv",
+        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "11_stenciling/shaders/vert.spv",
             device->logical_device.get());
-        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "10_blending/shaders/frag.spv",
+        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "11_stenciling/shaders/frag.spv",
             device->logical_device.get());
-        shader_modules["frag_alpha_test"] = VulkanUtil::CreateShaderModule(
-            src_path + "10_blending/shaders/frag_alpha_test.spv", device->logical_device.get());
     }
-    void BuildLandGeometry() {
-        GeometryGenerator geo_gen;
-        GeometryGenerator::MeshData grid = geo_gen.Grid(160.0f, 160.0f, 50, 50);
+    void BuildRoomGeometry() {
+        std::array<Vertex, 20> vertices = {
+            // Floor: Observe we tile texture coordinates.
+            Vertex(-3.5f, 0.0f, -10.0f, 0.0f, 1.0f, 0.0f, 0.0f, 4.0f), // 0
+            Vertex(-3.5f, 0.0f,   0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f),
+            Vertex( 7.5f, 0.0f,   0.0f, 0.0f, 1.0f, 0.0f, 4.0f, 0.0f),
+            Vertex( 7.5f, 0.0f, -10.0f, 0.0f, 1.0f, 0.0f, 4.0f, 4.0f),
 
-        std::vector<Vertex> vertices(grid.vertices.size());
-        for (int i = 0; i < vertices.size(); i++) {
-            const auto &p = grid.vertices[i].pos;
-            vertices[i].pos = p;
-            vertices[i].pos.y() = GetHillHeight(p.x(), p.z());
-            vertices[i].norm = GetHillNormal(p.x(), p.z());
-            vertices[i].texc = grid.vertices[i].texc;
-        }
-        std::vector<uint16_t> indices = grid.GetIndices16();
+            // Wall: Observe we tile texture coordinates, and that we
+            // leave a gap in the middle for the mirror.
+            Vertex(-3.5f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 2.0f), // 4
+            Vertex(-3.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f),
+            Vertex(-2.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.5f, 0.0f),
+            Vertex(-2.5f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.5f, 2.0f),
+
+            Vertex(2.5f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 2.0f), // 8
+            Vertex(2.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f),
+            Vertex(7.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 2.0f, 0.0f),
+            Vertex(7.5f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 2.0f, 2.0f),
+
+            Vertex(-3.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 1.0f), // 12
+            Vertex(-3.5f, 6.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f),
+            Vertex( 7.5f, 6.0f, 0.0f, 0.0f, 0.0f, -1.0f, 6.0f, 0.0f),
+            Vertex( 7.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 6.0f, 1.0f),
+
+            // Mirror
+            Vertex(-2.5f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 1.0f), // 16
+            Vertex(-2.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 0.0f, 0.0f),
+            Vertex( 2.5f, 4.0f, 0.0f, 0.0f, 0.0f, -1.0f, 1.0f, 0.0f),
+            Vertex( 2.5f, 0.0f, 0.0f, 0.0f, 0.0f, -1.0f, 1.0f, 1.0f)
+        };
+
+        std::array<std::int16_t, 30> indices = {
+            // Floor
+            0, 1, 2,
+            0, 2, 3,
+
+            // Walls
+            4, 5, 6,
+            4, 6, 7,
+
+            8, 9, 10,
+            8, 10, 11,
+
+            12, 13, 14,
+            12, 14, 15,
+
+            // Mirror
+            16, 17, 18,
+            16, 18, 19
+        };
 
         uint32_t vb_size = vertices.size() * sizeof(Vertex);
         uint32_t ib_size = indices.size() * sizeof(uint16_t);
 
         auto geo = std::make_unique<MeshGeometry>();
-        geo->name = "land_geo";
+        geo->name = "room_geo";
+
+        geo->vertex_data.resize(vb_size);
+        memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
+        geo->index_data.resize(ib_size);
+        memcpy(geo->index_data.data(), indices.data(), ib_size);
+
+        geo->vertex_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eVertexBuffer,
+            vb_size, vertices.data(), geo->vertex_staging_buffer, main_command_buffer.get());
+        geo->index_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eIndexBuffer,
+            ib_size, indices.data(), geo->index_staging_buffer, main_command_buffer.get());
+
+        geo->vertex_stride = sizeof(Vertex);
+        geo->vb_size = vb_size;
+        geo->index_type = vk::IndexType::eUint16;
+        geo->ib_size = ib_size;
+
+        SubmeshGeometry floor_submesh;
+        floor_submesh.n_index = 6;
+        floor_submesh.first_index = 0;
+        floor_submesh.vertex_offset = 0;
+        geo->draw_args["floor"] = floor_submesh;
+
+        SubmeshGeometry wall_submesh;
+        wall_submesh.n_index = 18;
+        wall_submesh.first_index = 6;
+        wall_submesh.vertex_offset = 0;
+        geo->draw_args["wall"] = wall_submesh;
+
+        SubmeshGeometry mirror_submesh;
+        mirror_submesh.n_index = 6;
+        mirror_submesh.first_index = 24;
+        mirror_submesh.vertex_offset = 0;
+        geo->draw_args["mirror"] = mirror_submesh;
+
+        geometries[geo->name] = std::move(geo);
+    }
+    void BuildSkullGeometry() {
+        std::ifstream fin(root_path + "models/skull.txt");
+        if (!fin) {
+            std::cerr << "skull.txt not found" << std::endl;
+            return;
+        }
+
+        int n_vertex, n_triangle;
+        std::string ignore;
+        fin >> ignore >> n_vertex;
+        fin >> ignore >> n_triangle;
+        fin >> ignore >> ignore >> ignore >> ignore;
+
+        std::vector<Vertex> vertices(n_vertex);
+        for (int i = 0; i < n_vertex; i++) {
+            fin >> vertices[i].pos.x() >> vertices[i].pos.y() >> vertices[i].pos.z();
+            fin >> vertices[i].norm.x() >> vertices[i].norm.y() >> vertices[i].norm.z();
+            vertices[i].texc = { 0.0f, 0.0f };
+        }
+
+        fin >> ignore >> ignore >> ignore;
+        std::vector<uint16_t> indices(n_triangle * 3);
+        for (int i = 0; i < n_triangle; i++) {
+            fin >> indices[3 * i] >> indices[3 * i + 1] >> indices[3 * i + 2];
+        }
+        fin.close();
+
+        uint32_t vb_size = vertices.size() * sizeof(Vertex);
+        uint32_t ib_size = indices.size() * sizeof(uint16_t);
+
+        auto geo = std::make_unique<MeshGeometry>();
+        geo->name = "skull_geo";
 
         geo->vertex_data.resize(vb_size);
         memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
@@ -441,91 +534,7 @@ private:
         submesh.n_index = indices.size();
         submesh.first_index = 0;
         submesh.vertex_offset = 0;
-        geo->draw_args["grid"] = submesh;
-
-        geometries[geo->name] = std::move(geo);
-    }
-    void BuildWaveGeometry() {
-        std::vector<uint16_t> indices(3 * wave->TriangleCount());
-        assert(wave->VertexCount() < 0x0000ffff);
-
-        int m = wave->RowCount();
-        int n = wave->ColumnCount();
-        int k = 0;
-        for (int i = 0; i < m - 1; i++) {
-            for (int j = 0; j < n - 1; j++) {
-                indices[k] = i * n + j;
-                indices[k + 1] = i * n + j + 1;
-                indices[k + 2] = (i + 1) * n + j;
-                indices[k + 3] = (i + 1) * n + j;
-                indices[k + 4] = i * n + j + 1;
-                indices[k + 5] = (i + 1) * n + j + 1;
-                k += 6;
-            }
-        }
-
-        uint32_t vb_size = wave->VertexCount() * sizeof(Vertex);
-        uint32_t ib_size = indices.size() * sizeof(uint16_t);
-
-        auto geo = std::make_unique<MeshGeometry>();
-        geo->name = "water_geo";
-
-        geo->index_data.resize(ib_size);
-        memcpy(geo->index_data.data(), indices.data(), ib_size);
-        geo->index_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eIndexBuffer,
-            ib_size, indices.data(), geo->index_staging_buffer, main_command_buffer.get());
-
-        geo->vertex_stride = sizeof(Vertex);
-        geo->vb_size = vb_size;
-        geo->index_type = vk::IndexType::eUint16;
-        geo->ib_size = ib_size;
-
-        SubmeshGeometry submesh;
-        submesh.n_index = indices.size();
-        submesh.first_index = 0;
-        submesh.vertex_offset = 0;
-        geo->draw_args["grid"] = submesh;
-
-        geometries[geo->name] = std::move(geo);
-    }
-    void BuildBoxGeometry() {
-        GeometryGenerator geo_gen;
-        GeometryGenerator::MeshData box = geo_gen.Box(8.0f, 8.0f, 8.0f, 3);
-
-        std::vector<Vertex> vertices(box.vertices.size());
-        for (size_t i = 0; i < vertices.size(); i++) {
-            vertices[i].pos = box.vertices[i].pos;
-            vertices[i].norm = box.vertices[i].norm;
-            vertices[i].texc = box.vertices[i].texc;
-        }
-        std::vector<uint16_t> indices = box.GetIndices16();
-
-        uint32_t vb_size = vertices.size() * sizeof(Vertex);
-        uint32_t ib_size = indices.size() * sizeof(uint16_t);
-
-        auto geo = std::make_unique<MeshGeometry>();
-        geo->name = "box_geo";
-
-        geo->vertex_data.resize(vb_size);
-        memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
-        geo->index_data.resize(ib_size);
-        memcpy(geo->index_data.data(), indices.data(), ib_size);
-
-        geo->vertex_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eVertexBuffer,
-            vb_size, vertices.data(), geo->vertex_staging_buffer, main_command_buffer.get());
-        geo->index_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eIndexBuffer,
-            ib_size, indices.data(), geo->index_staging_buffer, main_command_buffer.get());
-
-        geo->vertex_stride = sizeof(Vertex);
-        geo->vb_size = vb_size;
-        geo->index_type = vk::IndexType::eUint16;
-        geo->ib_size = ib_size;
-
-        SubmeshGeometry submesh;
-        submesh.n_index = indices.size();
-        submesh.first_index = 0;
-        submesh.vertex_offset = 0;
-        geo->draw_args["box"] = submesh;
+        geo->draw_args["skull"] = submesh;
 
         geometries[geo->name] = std::move(geo);
     }
@@ -560,105 +569,153 @@ private:
     void BuildTextures() {
         size_t tex_index = 0;
 
-        auto grass_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/grass.dds",
+        auto checkboard_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/checkboard.dds",
             main_command_buffer.get());
-        grass_tex->name = "grass";
-        grass_tex->tex_index = tex_index++;
-        textures[grass_tex->name] = std::move(grass_tex);
+        checkboard_tex->name = "checkboard";
+        checkboard_tex->tex_index = tex_index++;
+        textures[checkboard_tex->name] = std::move(checkboard_tex);
 
-        auto water_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/water1.dds",
+        auto brick_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/bricks3.dds",
             main_command_buffer.get());
-        water_tex->name = "water";
-        water_tex->tex_index = tex_index++;
-        textures[water_tex->name] = std::move(water_tex);
+        brick_tex->name = "brick";
+        brick_tex->tex_index = tex_index++;
+        textures[brick_tex->name] = std::move(brick_tex);
 
-        auto box_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/WireFence.dds",
+        auto ice_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/ice.dds",
             main_command_buffer.get());
-        box_tex->name = "box";
-        box_tex->tex_index = tex_index++;
-        textures[box_tex->name] = std::move(box_tex);
+        ice_tex->name = "ice";
+        ice_tex->tex_index = tex_index++;
+        textures[ice_tex->name] = std::move(ice_tex);
+
+        auto white_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/white1x1.dds",
+            main_command_buffer.get());
+        white_tex->name = "white";
+        white_tex->tex_index = tex_index++;
+        textures[white_tex->name] = std::move(white_tex);
     }
     void BuildMaterials() {
         size_t mat_index = 0;
 
-        auto grass = std::make_unique<Material>();
-        grass->name = "grass";
-        grass->mat_index = mat_index++;
-        grass->n_frame_dirty = n_inflight_frames;
-        grass->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
-        grass->fresnel_r0 = { 0.01f, 0.01f, 0.01f };
-        grass->roughness = 0.125f;
-        grass->diffuse_tex_index = textures["grass"]->tex_index;
-        materials[grass->name] = std::move(grass);
+        auto checkboard = std::make_unique<Material>();
+        checkboard->name = "checkboard";
+        checkboard->mat_index = mat_index++;
+        checkboard->n_frame_dirty = n_inflight_frames;
+        checkboard->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+        checkboard->fresnel_r0 = { 0.07f, 0.07f, 0.07f };
+        checkboard->roughness = 0.3f;
+        checkboard->diffuse_tex_index = textures["checkboard"]->tex_index;
+        materials[checkboard->name] = std::move(checkboard);
 
-        auto water = std::make_unique<Material>();
-        water->name = "water";
-        water->mat_index = mat_index++;
-        water->n_frame_dirty = n_inflight_frames;
-        water->albedo = { 1.0f, 1.0f, 1.0f, 0.5f };
-        water->fresnel_r0 = { 0.2f, 0.2f, 0.2f };
-        water->roughness = 0.0f;
-        water->diffuse_tex_index = textures["water"]->tex_index;
-        materials[water->name] = std::move(water);
+        auto brick = std::make_unique<Material>();
+        brick->name = "brick";
+        brick->mat_index = mat_index++;
+        brick->n_frame_dirty = n_inflight_frames;
+        brick->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+        brick->fresnel_r0 = { 0.05f, 0.05f, 0.05f };
+        brick->roughness = 0.25f;
+        brick->diffuse_tex_index = textures["brick"]->tex_index;
+        materials[brick->name] = std::move(brick);
 
-        auto box = std::make_unique<Material>();
-        box->name = "box";
-        box->mat_index = mat_index++;
-        box->n_frame_dirty = n_inflight_frames;
-        box->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
-        box->fresnel_r0 = { 0.1f, 0.1f, 0.1f };
-        box->roughness = 0.25f;
-        box->diffuse_tex_index = textures["box"]->tex_index;
-        materials[box->name] = std::move(box);
+        auto ice = std::make_unique<Material>();
+        ice->name = "ice";
+        ice->mat_index = mat_index++;
+        ice->n_frame_dirty = n_inflight_frames;
+        ice->albedo = { 1.0f, 1.0f, 1.0f, 0.3f };
+        ice->fresnel_r0 = { 0.1f, 0.1f, 0.1f };
+        ice->roughness = 0.5f;
+        ice->diffuse_tex_index = textures["ice"]->tex_index;
+        materials[ice->name] = std::move(ice);
+
+        auto white = std::make_unique<Material>();
+        white->name = "white";
+        white->mat_index = mat_index++;
+        white->n_frame_dirty = n_inflight_frames;
+        white->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+        white->fresnel_r0 = { 0.05f, 0.05f, 0.05f };
+        white->roughness = 0.3f;
+        white->diffuse_tex_index = textures["white"]->tex_index;
+        materials[white->name] = std::move(white);
     }
     void BuildRenderItems() {
         size_t obj_index = 0;
 
-        auto wave_ritem = std::make_unique<RenderItem>();
-        wave_ritem->obj_index = obj_index++;
-        wave_ritem->n_frame_dirty = n_inflight_frames;
-        wave_ritem->mesh = geometries["water_geo"].get();
-        wave_ritem->index_buffer = wave_ritem->mesh->index_buffer->buffer.get();
-        wave_ritem->mat = materials["water"].get();
-        wave_ritem->n_index = wave_ritem->mesh->draw_args["grid"].n_index;
-        wave_ritem->first_index = wave_ritem->mesh->draw_args["grid"].first_index;
-        wave_ritem->vertex_offset = wave_ritem->mesh->draw_args["grid"].vertex_offset;
-        items[static_cast<size_t>(RenderLayer::Transparent)].push_back(wave_ritem.get());
-        this->wave_ritem = wave_ritem.get();
-        render_items.emplace_back(std::move(wave_ritem));
+        auto floor_ritem = std::make_unique<RenderItem>();
+        floor_ritem->obj_index = obj_index++;
+        floor_ritem->n_frame_dirty = n_inflight_frames;
+        floor_ritem->mesh = geometries["room_geo"].get();
+        floor_ritem->vertex_buffer = floor_ritem->mesh->vertex_buffer->buffer.get();
+        floor_ritem->index_buffer = floor_ritem->mesh->index_buffer->buffer.get();
+        floor_ritem->mat = materials["checkboard"].get();
+        floor_ritem->n_index = floor_ritem->mesh->draw_args["floor"].n_index;
+        floor_ritem->first_index = floor_ritem->mesh->draw_args["floor"].first_index;
+        floor_ritem->vertex_offset= floor_ritem->mesh->draw_args["floor"].vertex_offset;
+        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(floor_ritem.get());
 
-        auto grid_ritem = std::make_unique<RenderItem>();
-        grid_ritem->obj_index = obj_index++;
-        grid_ritem->n_frame_dirty = n_inflight_frames;
-        grid_ritem->mesh = geometries["land_geo"].get();
-        grid_ritem->vertex_buffer = grid_ritem->mesh->vertex_buffer->buffer.get();
-        grid_ritem->index_buffer = grid_ritem->mesh->index_buffer->buffer.get();
-        grid_ritem->mat = materials["grass"].get();
-        grid_ritem->n_index = grid_ritem->mesh->draw_args["grid"].n_index;
-        grid_ritem->first_index = grid_ritem->mesh->draw_args["grid"].first_index;
-        grid_ritem->vertex_offset= grid_ritem->mesh->draw_args["grid"].vertex_offset;
-        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(grid_ritem.get());
-        render_items.emplace_back(std::move(grid_ritem));
+        auto reflected_floor_ritem = std::make_unique<RenderItem>();
+        *reflected_floor_ritem = *floor_ritem;
+        reflected_floor_ritem->obj_index = obj_index++;
+        reflected_floor_ritem->model = MathUtil::Reflect({ 0.0f, 0.0f, 1.0f, 0.0f });
+        items[static_cast<size_t>(RenderLayer::Reflected)].push_back(reflected_floor_ritem.get());
 
-        auto box_ritem = std::make_unique<RenderItem>();
-        box_ritem->obj_index = obj_index++;
-        box_ritem->n_frame_dirty = n_inflight_frames;
-        box_ritem->model = MathUtil::Translate({ 3.0f, 2.0f, -9.0f });
-        box_ritem->mesh = geometries["box_geo"].get();
-        box_ritem->vertex_buffer = box_ritem->mesh->vertex_buffer->buffer.get();
-        box_ritem->index_buffer = box_ritem->mesh->index_buffer->buffer.get();
-        box_ritem->mat = materials["box"].get();
-        box_ritem->n_index = box_ritem->mesh->draw_args["box"].n_index;
-        box_ritem->first_index = box_ritem->mesh->draw_args["box"].first_index;
-        box_ritem->vertex_offset= box_ritem->mesh->draw_args["box"].vertex_offset;
-        items[static_cast<size_t>(RenderLayer::AlphaTest)].push_back(box_ritem.get());
-        render_items.emplace_back(std::move(box_ritem));
+        render_items.emplace_back(std::move(floor_ritem));
+        render_items.emplace_back(std::move(reflected_floor_ritem));
+
+        auto wall_ritem = std::make_unique<RenderItem>();
+        wall_ritem->obj_index = obj_index++;
+        wall_ritem->n_frame_dirty = n_inflight_frames;
+        wall_ritem->mesh = geometries["room_geo"].get();
+        wall_ritem->vertex_buffer = wall_ritem->mesh->vertex_buffer->buffer.get();
+        wall_ritem->index_buffer = wall_ritem->mesh->index_buffer->buffer.get();
+        wall_ritem->mat = materials["brick"].get();
+        wall_ritem->n_index = wall_ritem->mesh->draw_args["wall"].n_index;
+        wall_ritem->first_index = wall_ritem->mesh->draw_args["wall"].first_index;
+        wall_ritem->vertex_offset = wall_ritem->mesh->draw_args["wall"].vertex_offset;
+        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(wall_ritem.get());
+        render_items.emplace_back(std::move(wall_ritem));
+
+        auto mirror_ritem = std::make_unique<RenderItem>();
+        mirror_ritem->obj_index = obj_index++;
+        mirror_ritem->n_frame_dirty = n_inflight_frames;
+        mirror_ritem->mesh = geometries["room_geo"].get();
+        mirror_ritem->vertex_buffer = mirror_ritem->mesh->vertex_buffer->buffer.get();
+        mirror_ritem->index_buffer = mirror_ritem->mesh->index_buffer->buffer.get();
+        mirror_ritem->mat = materials["ice"].get();
+        mirror_ritem->n_index = mirror_ritem->mesh->draw_args["mirror"].n_index;
+        mirror_ritem->first_index = mirror_ritem->mesh->draw_args["mirror"].first_index;
+        mirror_ritem->vertex_offset = mirror_ritem->mesh->draw_args["mirror"].vertex_offset;
+        items[static_cast<size_t>(RenderLayer::Transparent)].push_back(mirror_ritem.get());
+        items[static_cast<size_t>(RenderLayer::Mirror)].push_back(mirror_ritem.get());
+        render_items.emplace_back(std::move(mirror_ritem));
+
+        auto skull_ritem = std::make_unique<RenderItem>();
+        skull_ritem->obj_index = obj_index++;
+        skull_ritem->n_frame_dirty = n_inflight_frames;
+        skull_ritem->model = MathUtil::Translate(skull_translation) * skull_rotation * skull_scaling;
+        skull_ritem->mesh = geometries["skull_geo"].get();
+        skull_ritem->vertex_buffer = skull_ritem->mesh->vertex_buffer->buffer.get();
+        skull_ritem->index_buffer = skull_ritem->mesh->index_buffer->buffer.get();
+        skull_ritem->mat = materials["white"].get();
+        skull_ritem->n_index = skull_ritem->mesh->draw_args["skull"].n_index;
+        skull_ritem->first_index = skull_ritem->mesh->draw_args["skull"].first_index;
+        skull_ritem->vertex_offset = skull_ritem->mesh->draw_args["skull"].vertex_offset;
+        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(skull_ritem.get());
+        this->skull_ritem = skull_ritem.get();
+
+        auto reflected_skull_ritem = std::make_unique<RenderItem>();
+        *reflected_skull_ritem = *skull_ritem;
+        reflected_skull_ritem->obj_index = obj_index++;
+        reflected_skull_ritem->model = MathUtil::Reflect({ 0.0f, 0.0f, 1.0f, 0.0f }) * skull_ritem->model;
+        items[static_cast<size_t>(RenderLayer::Reflected)].push_back(reflected_skull_ritem.get());
+        this->reflected_skull_ritem = reflected_skull_ritem.get();
+
+        render_items.emplace_back(std::move(skull_ritem));
+        render_items.emplace_back(std::move(reflected_skull_ritem));
     }
     void BuildDescriptorPool() {
         size_t n_obj = n_inflight_frames * render_items.size();
         size_t n_tex = n_inflight_frames * textures.size();
         size_t n_mat = n_inflight_frames * materials.size();
-        size_t n_pass = n_inflight_frames;
+        size_t n_pass = n_inflight_frames * 2;
 
         std::array<vk::DescriptorPoolSize, 5> pool_sizes = {
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_obj),
@@ -678,8 +735,7 @@ private:
                 descriptor_set_layouts[0].get(), render_items.size(),
                 descriptor_set_layouts[1].get(), textures.size(),
                 descriptor_set_layouts[2].get(), materials.size(),
-                descriptor_set_layouts[3].get(), 1,
-                wave->VertexCount());
+                descriptor_set_layouts[3].get(), 2);
         }
         curr_fr = frame_resources[curr_frame = 0].get();
     }
@@ -689,7 +745,7 @@ private:
         size_t vert_pass_ub_size = sizeof(VertPassUB);
         size_t frag_pass_ub_size = sizeof(FragPassUB);
 
-        size_t count_buffer = n_inflight_frames * (render_items.size() + materials.size() + 2);
+        size_t count_buffer = n_inflight_frames * (render_items.size() + materials.size() + 2 * 2);
         size_t count_image = n_inflight_frames * textures.size();
         std::vector<vk::WriteDescriptorSet> writes(count_buffer + count_image);
         std::vector<vk::DescriptorBufferInfo> buffer_infos(count_buffer);
@@ -733,6 +789,19 @@ private:
             buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->frag_pass_ub->Buffer()->buffer.get(),
                 0, frag_pass_ub_size);
             writes[p] = vk::WriteDescriptorSet(frame_resources[i]->pass_set[0], 1, 0, 1,
+                vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos[pb], nullptr);
+            ++pb;
+            ++p;
+
+            buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->vert_pass_ub->Buffer()->buffer.get(),
+                vert_pass_ub_size, vert_pass_ub_size);
+            writes[p] = vk::WriteDescriptorSet(frame_resources[i]->pass_set[1], 0, 0, 1,
+                vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos[pb], nullptr);
+            ++pb;
+            ++p;
+            buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->frag_pass_ub->Buffer()->buffer.get(),
+                frag_pass_ub_size, frag_pass_ub_size);
+            writes[p] = vk::WriteDescriptorSet(frame_resources[i]->pass_set[1], 1, 0, 1,
                 vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos[pb], nullptr);
             ++pb;
             ++p;
@@ -780,21 +849,25 @@ private:
             &dynamic_state, pipeline_layout.get(), render_pass.get(), 0);
         graphics_pipelines["normal"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
 
-        auto shader_stages_alpha_test = shader_stages;
-        shader_stages_alpha_test[1] = vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment,
-            shader_modules["frag_alpha_test"].get(), "main");
-        rasterization.setCullMode(vk::CullModeFlagBits::eNone);
-        create_info.setStageCount(shader_stages_alpha_test.size()).setPStages(shader_stages_alpha_test.data());
-        graphics_pipelines["alpha_test"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
-
-        rasterization.setCullMode(vk::CullModeFlagBits::eBack);
         cb_attachment.setBlendEnable(VK_TRUE).setColorBlendOp(vk::BlendOp::eAdd)
             .setSrcColorBlendFactor(vk::BlendFactor::eSrcAlpha)
             .setDstColorBlendFactor(vk::BlendFactor::eOneMinusSrcAlpha)
             .setSrcAlphaBlendFactor(vk::BlendFactor::eOne)
             .setDstAlphaBlendFactor(vk::BlendFactor::eZero);
-        create_info.setStageCount(shader_stages.size()).setPStages(shader_stages.data());
         graphics_pipelines["transparent"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
+
+        cb_attachment.setBlendEnable(VK_FALSE);
+        depth_stencil.setStencilTestEnable(VK_TRUE)
+            .setFront({ vk::StencilOp::eKeep, vk::StencilOp::eKeep, vk::StencilOp::eKeep,
+                vk::CompareOp::eEqual, 0xff, 0xff, 1 });
+        rasterization.setFrontFace(vk::FrontFace::eClockwise);
+        graphics_pipelines["reflected"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
+
+        depth_stencil.setDepthWriteEnable(VK_FALSE)
+            .setFront({ vk::StencilOp::eKeep, vk::StencilOp::eReplace, vk::StencilOp::eKeep,
+                vk::CompareOp::eAlways, 0xff, 0xff, 1 });
+        rasterization.setFrontFace(vk::FrontFace::eCounterClockwise);
+        graphics_pipelines["mirror"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
     }
 
     vk::UniqueRenderPass render_pass;
@@ -813,10 +886,10 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Material>> materials;
     std::unordered_map<std::string, std::unique_ptr<Texture>> textures;
     std::unordered_map<std::string, vk::UniqueSampler> samplers;
-    std::unique_ptr<Wave> wave;
 
     VertPassUB main_vert_pass_ub;
     FragPassUB main_frag_pass_ub;
+    FragPassUB reflected_frag_pass_ub;
 
     float eye_theta = MathUtil::kPiDiv4;
     float eye_phi = MathUtil::kPiDiv4;
@@ -834,12 +907,17 @@ private:
 
     std::vector<std::unique_ptr<RenderItem>> render_items;
     std::vector<RenderItem *> items[static_cast<size_t>(RenderLayer::Count)];
-    RenderItem *wave_ritem;
+    RenderItem *skull_ritem = nullptr;
+    RenderItem *reflected_skull_ritem = nullptr;
+
+    Eigen::Vector3f skull_translation = { 0.0f, 1.0f, -5.0f };
+    Eigen::Matrix4f skull_rotation = MathUtil::AngelAxis(MathUtil::kPiDiv2, { 0.0f, 1.0f, 0.0f });
+    Eigen::Matrix4f skull_scaling = MathUtil::Scale({ 0.45f, 0.45f, 0.45f });
 };
 
 int main() {
     try {
-        VulkanAppBlending app;
+        VulkanAppStenciling app;
         app.Initialize();
         app.MainLoop();
     } catch (const std::runtime_error &e) {

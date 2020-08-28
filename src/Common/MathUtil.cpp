@@ -10,6 +10,15 @@ float MathUtil::Lerp(float a, float b, float t) {
     return a + t * (b - a);
 }
 
+Eigen::Vector3f MathUtil::TransformPoint(const Eigen::Matrix4f &mat, const Eigen::Vector3f &point) {
+    auto temp = mat * Eigen::Vector4f(point.x(), point.y(), point.z(), 1.0f);
+    float inv_w = 1.0f / temp.w();
+    return temp.topRows<3>() * inv_w;
+}
+Eigen::Vector3f MathUtil::TransformVector(const Eigen::Matrix4f &mat, const Eigen::Vector3f &vec) {
+    return (mat * Eigen::Vector4f(vec.x(), vec.y(), vec.z(), 0.0f)).topRows<3>();
+}
+
 Eigen::Matrix4f MathUtil::AngelAxis(float angel, const Eigen::Vector3f &axis) {
     Eigen::Affine3f a;
     a = Eigen::AngleAxisf(angel, axis);
@@ -25,6 +34,20 @@ Eigen::Matrix4f MathUtil::Translate(const Eigen::Vector3f &trans) {
     Eigen::Affine3f a;
     a = Eigen::Translation3f(trans);
     return a.matrix();
+}
+Eigen::Matrix4f MathUtil::Reflect(const Eigen::Vector4f &plane) {
+    float mod = Eigen::Vector3f(plane.x(), plane.y(), plane.z()).norm();
+    float inv_mod = 1.0f / mod;
+    Eigen::Vector4f normalized_plane = plane * inv_mod;
+
+    // A^2 + B^2 + C^2 = 1
+    // 1 - 2A^2    -2AB        -2AC        -2AD
+    // -2BA        1 - 2B^2    -2BC        -2BD
+    // -2CA        -2CB        1 - 2C^2    -2CD
+    // 0           0           0           1
+    Eigen::Matrix4f res = Eigen::Matrix4f::Identity() - 2.0f * normalized_plane * normalized_plane.transpose();
+    res.row(3) = Eigen::Vector4f(0.0f, 0.0f, 0.0f, 1.0f);
+    return res;
 }
 
 Eigen::Matrix4f MathUtil::LookAt(const Eigen::Vector3f &eye, const Eigen::Vector3f &look_at,

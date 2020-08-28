@@ -45,24 +45,19 @@ std::unique_ptr<Texture> VulkanUtil::LoadTextureFromFile(const vku::Device *devi
     tex->filename = filename;
     gli::texture gli_tex = gli::load(filename);
 
-    vk::ImageType image_type = vk::ImageType::e1D;
-    vk::ImageViewType image_view_type = vk::ImageViewType::e1D;
+    vk::ImageType image_type = vk::ImageType::e2D;
+    vk::ImageViewType image_view_type = vk::ImageViewType::e2D;
     auto gli_extent = gli_tex.extent(0);
     uint32_t layers = gli_tex.layers();
     bool is_cube = false;
     if (gli_extent.z == 1) {
-        if (gli_extent.y == 1) {
-            image_type = vk::ImageType::e1D;
-            image_view_type = (gli_tex.layers() == 1 ? vk::ImageViewType::e1D : vk::ImageViewType::e1DArray);
+        image_type = vk::ImageType::e2D;
+        if (gli_tex.faces() == 1) {
+            image_view_type = (gli_tex.layers() == 1 ? vk::ImageViewType::e2D : vk::ImageViewType::e2DArray);
         } else {
-            image_type = vk::ImageType::e2D;
-            if (gli_tex.faces() == 1) {
-                image_view_type = (gli_tex.layers() == 1 ? vk::ImageViewType::e2D : vk::ImageViewType::e2DArray);
-            } else {
-                image_view_type = vk::ImageViewType::e2DArray;
-                layers = 6;
-                is_cube = true;
-            }
+            image_view_type = vk::ImageViewType::e2DArray;
+            layers = 6;
+            is_cube = true;
         }
     } else {
         image_type = vk::ImageType::e3D;
