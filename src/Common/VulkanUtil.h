@@ -4,18 +4,10 @@
 #include <unordered_map>
 
 #include "VulkanBuffer.h"
+#include "VulkanImage.h"
 #include "Eigen/Dense"
 
 using namespace pepcy;
-
-class VulkanUtil {
-public:
-    static vk::UniqueShaderModule CreateShaderModule(const std::string &spv_file, vk::Device device);
-
-    static std::unique_ptr<vku::Buffer> CreateDeviceLocalBuffer(vku::Device *device, vk::BufferUsageFlagBits usage,
-        vk::DeviceSize size, const void *data, std::unique_ptr<vku::Buffer> &staging_buffer,
-        vk::CommandBuffer command_buffer);
-};
 
 struct SubmeshGeometry {
     uint32_t n_index = 0;
@@ -68,4 +60,26 @@ struct Material {
     Eigen::Vector3f fresnel_r0 = { 0.0f, 0.0f, 0.0f };
     float roughness = 0.0f;
     Eigen::Matrix4f mat_transform = Eigen::Matrix4f::Identity();
+    size_t diffuse_tex_index = 0;
+};
+
+struct Texture {
+    std::string name;
+    std::string filename;
+    std::unique_ptr<vku::Image> image;
+    std::unique_ptr<vku::Buffer> staging;
+    vk::UniqueImageView image_view;
+    size_t tex_index = 0;
+};
+
+class VulkanUtil {
+public:
+    static vk::UniqueShaderModule CreateShaderModule(const std::string &spv_file, vk::Device device);
+
+    static std::unique_ptr<vku::Buffer> CreateDeviceLocalBuffer(const vku::Device *device, vk::BufferUsageFlagBits usage,
+        vk::DeviceSize size, const void *data, std::unique_ptr<vku::Buffer> &staging_buffer,
+        vk::CommandBuffer command_buffer);
+
+    static std::unique_ptr<Texture> LoadTextureFromFile(const vku::Device *device, const std::string &filename,
+        vk::CommandBuffer command_buffer);
 };

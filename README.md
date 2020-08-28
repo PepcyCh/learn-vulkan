@@ -14,10 +14,10 @@ Use CMake to build.
 ## TODO
 
 * [ ] Part 2 - D3D Foundation
-  * [x]  chap. 6 - drawing I
-  * [ ] chap. 7 - drawing II
-  * [ ] chap. 8 - lighting
-  * [ ] chap. 9 - texturing
+  * [x] chap. 6 - drawing I
+  * [x] chap. 7 - drawing II
+  * [x] chap. 8 - lighting
+  * [x] chap. 9 - texturing
   * [ ] chap. 10 - blending
   * [ ] chap. 11 - stenciling
   * [ ] chap. 12 - geometry shader

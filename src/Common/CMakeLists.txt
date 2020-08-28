@@ -14,4 +14,5 @@ target_include_directories(vk_common
 
 target_link_libraries(vk_common
     PUBLIC Eigen vk_util glfw
+    PRIVATE gli glm
 )

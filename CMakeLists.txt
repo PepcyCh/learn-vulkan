@@ -39,4 +39,20 @@ if(stb_ADDED)
     target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
 endif()
 
+CPMAddPackage(
+    NAME gli
+    GITHUB_REPOSITORY g-truc/gli
+    GIT_TAG 0.8.2
+    OPTIONS
+        "GLI_TEST_ENABLE OFF"
+)
+
+CPMAddPackage(
+    NAME glm
+    GITHUB_REPOSITORY g-truc/glm
+    GIT_TAG 0.9.8
+    OPTIONS
+        "GLM_TEST_ENABLE OFF"
+)
+
 add_subdirectory(src)
