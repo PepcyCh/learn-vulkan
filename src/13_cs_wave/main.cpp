@@ -24,30 +24,16 @@ struct RenderItem {
     int vertex_offset = 0;
     size_t obj_index = 0;
     uint32_t n_frame_dirty = 0;
+    Eigen::Vector2f displacement_map_texel_size = { 0.0f, 0.0f };
+    float grid_spatial_step = 0.0f;
 };
 
 enum class RenderLayer : size_t {
     Opaque,
     AlphaTest,
-    Sprite,
     Transparent,
+    GpuWave,
     Count
-};
-
-struct SpriteVertex {
-    Eigen::Vector3f pos;
-    Eigen::Vector2f size;
-
-    static vk::VertexInputBindingDescription BindDescription() {
-        return { 0, sizeof(SpriteVertex), vk::VertexInputRate::eVertex };
-    }
-
-    static std::array<vk::VertexInputAttributeDescription, 2> AttributeDescriptions() {
-        return {
-            vk::VertexInputAttributeDescription(0, 0, vk::Format::eR32G32B32Sfloat, offsetof(SpriteVertex, pos)),
-            vk::VertexInputAttributeDescription(1, 0, vk::Format::eR32G32Sfloat, offsetof(SpriteVertex, size)),
-        };
-    }
 };
 
 float GetHillHeight(float x, float z) {
@@ -64,9 +50,9 @@ Eigen::Vector3f GetHillNormal(float x, float z) {
 
 }
 
-class VulkanAppSprite : public VulkanApp {
+class VulkanAppGpuWave : public VulkanApp {
 public:
-    ~VulkanAppSprite() {
+    ~VulkanAppGpuWave() {
         if (device) {
             device->logical_device->waitIdle();
         }
@@ -78,7 +64,7 @@ public:
         vk::CommandBufferBeginInfo begin_info(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
         main_command_buffer->begin(begin_info);
 
-        wave = std::make_unique<Wave>(128, 128, 1.0f, 0.03f, 4.0f, 0.2f);
+        wave = std::make_unique<Wave>(device.get(), 128, 128, 1.0f, 0.03f, 4.0f, 0.2f, main_command_buffer.get());
 
         BuildRenderPass();
         BuildFramebuffers();
@@ -87,7 +73,6 @@ public:
         BuildLandGeometry();
         BuildWaveGeometry();
         BuildBoxGeometry();
-        BuildSpriteGeometry();
         BuildSamplers();
         BuildTextures();
         BuildMaterials();
@@ -96,6 +81,7 @@ public:
         BuildFrameResources();
         WriteDescriptorSets();
         BuildGraphicsPipeline();
+        BuildComputePipeline();
 
         main_command_buffer->end();
         vk::SubmitInfo submit_info {};
@@ -130,7 +116,7 @@ private:
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
         AnimateMaterials();
-        UpdateWave();
+        // UpdateWave(); (move to Draw())
         UpdateObjectUniform();
         UpdatePassUniform();
         UpdateMaterialUniform();
@@ -153,8 +139,11 @@ private:
         vk::CommandBufferBeginInfo buffer_begin_info(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
         command_buffers[curr_frame]->begin(buffer_begin_info);
 
+        UpdateWave();
+        wave->PrepareDraw(command_buffers[curr_frame].get());
+
         command_buffers[curr_frame]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout.get(), 3,
-            { curr_fr->pass_set[0] }, {});
+            { curr_fr->pass_set[0], curr_fr->disp_set[wave->CurrIndex()] }, {});
 
         std::array<float, 4> clear_color = {
             main_frag_pass_ub.fog_color.x(), main_frag_pass_ub.fog_color.y(),
@@ -181,12 +170,12 @@ private:
         DrawItems(items[static_cast<size_t>(RenderLayer::AlphaTest)]);
 
         command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
-            graphics_pipelines["sprite"].get());
-        DrawItems(items[static_cast<size_t>(RenderLayer::Sprite)]);
-
-        command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
             graphics_pipelines["transparent"].get());
         DrawItems(items[static_cast<size_t>(RenderLayer::Transparent)]);
+
+        command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
+            graphics_pipelines["gpu_wave"].get());
+        DrawItems(items[static_cast<size_t>(RenderLayer::GpuWave)]);
 
         command_buffers[curr_frame]->endRenderPass();
         command_buffers[curr_frame]->end();
@@ -266,32 +255,17 @@ private:
     void UpdateWave() {
         // Every quarter second, generate a random wave.
         static float t_base = 0.0f;
-        if ((this->timer.TotalTime() - t_base) >= 0.25f) {
+        wave->PrepareCompute(command_buffers[curr_frame].get());
+        if (timer.TotalTime() - t_base >= 0.25f) {
             t_base += 0.25f;
-
             int i = MathUtil::RandI(4, wave->RowCount() - 5);
             int j = MathUtil::RandI(4, wave->ColumnCount() - 5);
-
             float r = MathUtil::RandF(0.2f, 0.5f);
-
-            wave->Disturb(i, j, r);
+            wave->Disturb(i, j, r, compute_pipelines["wave_disturb"].get(), command_buffers[curr_frame].get());
         }
 
         // Update the wave simulation.
-        wave->Update(timer.DeltaTime());
-
-        // Update the wave vertex buffer with the new solution.
-        auto wave_vb = curr_fr->wave_vb.get();
-        for (int i = 0; i < wave->VertexCount(); i++) {
-            Vertex v;
-            v.pos = wave->Position(i);
-            v.norm = wave->Normal(i);
-            v.texc = { 0.5f + v.pos.x() / wave->Width(), 0.5f + v.pos.z() / wave->Depth() };
-            wave_vb->CopyData(i, v);
-        }
-
-        // Set the dynamic VB of the wave renderitem to the current frame VB.
-        wave_ritem->vertex_buffer = wave_vb->Buffer()->buffer.get();
+        wave->Update(timer.DeltaTime(), compute_pipelines["wave"].get(), command_buffers[curr_frame].get());
     }
     void UpdateObjectUniform() {
         for (const auto &item : render_items) {
@@ -300,6 +274,8 @@ private:
                 ub.model = item->model;
                 ub.model_it = item->model.transpose().inverse();
                 ub.tex_transform = item->tex_transform;
+                ub.displacement_map_texel_size = item->displacement_map_texel_size;
+                ub.grid_spatial_step = item->grid_spatial_step;
                 curr_fr->obj_ub->CopyData(item->obj_index, ub);
                 --item->n_frame_dirty;
             }
@@ -383,7 +359,7 @@ private:
         }
     }
     void BuildLayouts() {
-        descriptor_set_layouts.resize(4);
+        descriptor_set_layouts.resize(5);
 
         std::array<vk::DescriptorSetLayoutBinding, 1> obj_bindings = {
             // obj ub
@@ -409,32 +385,39 @@ private:
 
         std::array<vk::DescriptorSetLayoutBinding, 2> pass_bindings = {
             // vert pass ub
-            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1,
-                vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry),
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex),
             // frag pass ub
-            vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eUniformBuffer, 1,
-                vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eGeometry),
+            vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment),
         };
         vk::DescriptorSetLayoutCreateInfo pass_create_info({}, pass_bindings.size(), pass_bindings.data());
         descriptor_set_layouts[3] = device->logical_device->createDescriptorSetLayoutUnique(pass_create_info);
+
+        std::array<vk::DescriptorSetLayoutBinding, 1> disp_bindings = {
+            // displacement cis
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eCombinedImageSampler, 1,
+                vk::ShaderStageFlagBits::eVertex)
+        };
+        vk::DescriptorSetLayoutCreateInfo disp_create_info({}, disp_bindings.size(), disp_bindings.data());
+        descriptor_set_layouts[4] = device->logical_device->createDescriptorSetLayoutUnique(disp_create_info);
 
         auto layouts = vk::uniqueToRaw(descriptor_set_layouts);
         vk::PipelineLayoutCreateInfo pipeline_layout_create_info({}, layouts.size(), layouts.data(), 0, nullptr);
         pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
     void BuildShaderModules() {
-        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "12_gs_sprite/shaders/vert.spv",
+        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_wave/shaders/vert.spv",
             device->logical_device.get());
-        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "12_gs_sprite/shaders/frag.spv",
+        shader_modules["vert_disp"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_wave/shaders/vert_disp.spv",
+            device->logical_device.get());
+        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_wave/shaders/frag.spv",
             device->logical_device.get());
         shader_modules["frag_alpha_test"] = VulkanUtil::CreateShaderModule(
-            src_path + "12_gs_sprite/shaders/frag_alpha_test.spv", device->logical_device.get());
-        shader_modules["sprite_vert"] = VulkanUtil::CreateShaderModule(
-            src_path + "12_gs_sprite/shaders/sprite.vert.spv", device->logical_device.get());
-        shader_modules["sprite_geom"] = VulkanUtil::CreateShaderModule(
-            src_path + "12_gs_sprite/shaders/sprite.geom.spv", device->logical_device.get());
-        shader_modules["sprite_frag"] = VulkanUtil::CreateShaderModule(
-            src_path + "12_gs_sprite/shaders/sprite.frag.spv", device->logical_device.get());
+            src_path + "13_cs_wave/shaders/frag_alpha_test.spv", device->logical_device.get());
+
+        shader_modules["wave_comp"] = VulkanUtil::CreateShaderModule(
+            src_path + "13_cs_wave/shaders/wave.comp.spv", device->logical_device.get());
+        shader_modules["wave_disturb_comp"] = VulkanUtil::CreateShaderModule(
+            src_path + "13_cs_wave/shaders/wave_disturb.comp.spv", device->logical_device.get());
     }
     void BuildLandGeometry() {
         GeometryGenerator geo_gen;
@@ -480,32 +463,30 @@ private:
         geometries[geo->name] = std::move(geo);
     }
     void BuildWaveGeometry() {
-        std::vector<uint16_t> indices(3 * wave->TriangleCount());
-        assert(wave->VertexCount() < 0x0000ffff);
+        GeometryGenerator geo_gen;
+        GeometryGenerator::MeshData grid = geo_gen.Grid(160.0f, 160.0f, wave->ColumnCount(), wave->RowCount());
 
-        int m = wave->RowCount();
-        int n = wave->ColumnCount();
-        int k = 0;
-        for (int i = 0; i < m - 1; i++) {
-            for (int j = 0; j < n - 1; j++) {
-                indices[k] = i * n + j;
-                indices[k + 1] = i * n + j + 1;
-                indices[k + 2] = (i + 1) * n + j;
-                indices[k + 3] = (i + 1) * n + j;
-                indices[k + 4] = i * n + j + 1;
-                indices[k + 5] = (i + 1) * n + j + 1;
-                k += 6;
-            }
+        std::vector<Vertex> vertices(grid.vertices.size());
+        for (size_t i = 0; i < vertices.size(); i++) {
+            vertices[i].pos = grid.vertices[i].pos;
+            vertices[i].norm = grid.vertices[i].norm;
+            vertices[i].texc = grid.vertices[i].texc;
         }
+        std::vector<uint16_t> indices = grid.GetIndices16();
 
-        uint32_t vb_size = wave->VertexCount() * sizeof(Vertex);
+        uint32_t vb_size = vertices.size() * sizeof(Vertex);
         uint32_t ib_size = indices.size() * sizeof(uint16_t);
 
         auto geo = std::make_unique<MeshGeometry>();
         geo->name = "water_geo";
 
+        geo->vertex_data.resize(vb_size);
+        memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
         geo->index_data.resize(ib_size);
         memcpy(geo->index_data.data(), indices.data(), ib_size);
+
+        geo->vertex_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eVertexBuffer,
+            vb_size, vertices.data(), geo->vertex_staging_buffer, main_command_buffer.get());
         geo->index_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eIndexBuffer,
             ib_size, indices.data(), geo->index_staging_buffer, main_command_buffer.get());
 
@@ -563,50 +544,6 @@ private:
 
         geometries[geo->name] = std::move(geo);
     }
-    void BuildSpriteGeometry() {
-        const size_t kTreeCount = 16;
-        std::array<SpriteVertex, kTreeCount> vertices;
-        for (size_t i = 0; i < kTreeCount; i++) {
-            float x = MathUtil::RandF(-45.0f, 45.0f);
-            float z = MathUtil::RandF(-45.0f, 45.0f);
-            float y = GetHillHeight(x, z) + 8.0f;
-            vertices[i].pos = { x, y, z };
-            vertices[i].size = { 20.0f, 20.0f };
-        }
-        std::array<uint16_t, kTreeCount> indices = {
-            0, 1, 2, 3, 4, 5, 6, 7,
-            8, 9, 10, 11, 12, 13, 14, 15
-        };
-
-        uint32_t vb_size = vertices.size() * sizeof(SpriteVertex);
-        uint32_t ib_size = indices.size() * sizeof(uint16_t);
-
-        auto geo = std::make_unique<MeshGeometry>();
-        geo->name = "sprite_geo";
-
-        geo->vertex_data.resize(vb_size);
-        memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
-        geo->index_data.resize(ib_size);
-        memcpy(geo->index_data.data(), indices.data(), ib_size);
-
-        geo->vertex_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eVertexBuffer,
-            vb_size, vertices.data(), geo->vertex_staging_buffer, main_command_buffer.get());
-        geo->index_buffer = VulkanUtil::CreateDeviceLocalBuffer(device.get(), vk::BufferUsageFlagBits::eIndexBuffer,
-            ib_size, indices.data(), geo->index_staging_buffer, main_command_buffer.get());
-
-        geo->vertex_stride = sizeof(SpriteVertex);
-        geo->vb_size = vb_size;
-        geo->index_type = vk::IndexType::eUint16;
-        geo->ib_size = ib_size;
-
-        SubmeshGeometry submesh;
-        submesh.n_index = indices.size();
-        submesh.first_index = 0;
-        submesh.vertex_offset = 0;
-        geo->draw_args["tree"] = submesh;
-
-        geometries[geo->name] = std::move(geo);
-    }
     void BuildSamplers() {
         vk::SamplerCreateInfo repeat_create_info({}, vk::Filter::eNearest, vk::Filter::eNearest,
             vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
@@ -655,12 +592,6 @@ private:
         box_tex->name = "box";
         box_tex->tex_index = tex_index++;
         textures[box_tex->name] = std::move(box_tex);
-
-        auto tree_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/treeArray2.dds",
-            main_command_buffer.get());
-        tree_tex->name = "tree";
-        tree_tex->tex_index = tex_index++;
-        textures[tree_tex->name] = std::move(tree_tex);
     }
     void BuildMaterials() {
         size_t mat_index = 0;
@@ -694,16 +625,6 @@ private:
         box->roughness = 0.25f;
         box->diffuse_tex_index = textures["box"]->tex_index;
         materials[box->name] = std::move(box);
-
-        auto tree = std::make_unique<Material>();
-        tree->name = "tree";
-        tree->mat_index = mat_index++;
-        tree->n_frame_dirty = n_inflight_frames;
-        tree->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
-        tree->fresnel_r0 = { 0.01f, 0.01f, 0.01f };
-        tree->roughness = 0.125f;
-        tree->diffuse_tex_index = textures["tree"]->tex_index;
-        materials[tree->name] = std::move(tree);
     }
     void BuildRenderItems() {
         size_t obj_index = 0;
@@ -712,13 +633,15 @@ private:
         wave_ritem->obj_index = obj_index++;
         wave_ritem->n_frame_dirty = n_inflight_frames;
         wave_ritem->mesh = geometries["water_geo"].get();
+        wave_ritem->vertex_buffer = wave_ritem->mesh->vertex_buffer->buffer.get();
         wave_ritem->index_buffer = wave_ritem->mesh->index_buffer->buffer.get();
         wave_ritem->mat = materials["water"].get();
         wave_ritem->n_index = wave_ritem->mesh->draw_args["grid"].n_index;
         wave_ritem->first_index = wave_ritem->mesh->draw_args["grid"].first_index;
         wave_ritem->vertex_offset = wave_ritem->mesh->draw_args["grid"].vertex_offset;
-        items[static_cast<size_t>(RenderLayer::Transparent)].push_back(wave_ritem.get());
-        this->wave_ritem = wave_ritem.get();
+        wave_ritem->displacement_map_texel_size = { 1.0f / wave->ColumnCount(), 1.0f / wave->RowCount() };
+        wave_ritem->grid_spatial_step = wave->SpatialStep();
+        items[static_cast<size_t>(RenderLayer::GpuWave)].push_back(wave_ritem.get());
         render_items.emplace_back(std::move(wave_ritem));
 
         auto grid_ritem = std::make_unique<RenderItem>();
@@ -747,34 +670,32 @@ private:
         box_ritem->vertex_offset= box_ritem->mesh->draw_args["box"].vertex_offset;
         items[static_cast<size_t>(RenderLayer::AlphaTest)].push_back(box_ritem.get());
         render_items.emplace_back(std::move(box_ritem));
-
-        auto sprite_ritem = std::make_unique<RenderItem>();
-        sprite_ritem->obj_index = obj_index++;
-        sprite_ritem->n_frame_dirty = n_inflight_frames;
-        sprite_ritem->mesh = geometries["sprite_geo"].get();
-        sprite_ritem->vertex_buffer = sprite_ritem->mesh->vertex_buffer->buffer.get();
-        sprite_ritem->index_buffer = sprite_ritem->mesh->index_buffer->buffer.get();
-        sprite_ritem->mat = materials["tree"].get();
-        sprite_ritem->n_index = sprite_ritem->mesh->draw_args["tree"].n_index;
-        sprite_ritem->first_index = sprite_ritem->mesh->draw_args["tree"].first_index;
-        sprite_ritem->vertex_offset = sprite_ritem->mesh->draw_args["tree"].vertex_offset;
-        items[static_cast<size_t>(RenderLayer::Sprite)].push_back(sprite_ritem.get());
-        render_items.emplace_back(std::move(sprite_ritem));
     }
     void BuildDescriptorPool() {
         size_t n_obj = n_inflight_frames * render_items.size();
         size_t n_tex = n_inflight_frames * textures.size();
         size_t n_mat = n_inflight_frames * materials.size();
         size_t n_pass = n_inflight_frames;
+        size_t n_disp = n_inflight_frames * 3;
+        size_t n_wave = wave->DescriptorSetCount();
 
-        std::array<vk::DescriptorPoolSize, 5> pool_sizes = {
+        std::vector<vk::DescriptorPoolSize> pool_sizes = {
+            // obj
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_obj),
+            // tex
             vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, n_tex),
+            // mat
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_mat),
-            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_pass),
-            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_pass),
+            // pass
+            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_pass), // vert pass
+            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_pass), // frag pass
+            // displacement
+            vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, n_disp),
         };
-        vk::DescriptorPoolCreateInfo create_info({}, n_obj + n_tex + n_mat + n_pass,
+        auto wave_pool_sizes = wave->DescriptorPoolSizes();
+        std::copy(wave_pool_sizes.begin(), wave_pool_sizes.end(), std::back_inserter(pool_sizes));
+
+        vk::DescriptorPoolCreateInfo create_info({}, n_obj + n_tex + n_mat + n_pass + n_disp + n_wave,
             pool_sizes.size(), pool_sizes.data());
         descriptor_pool = device->logical_device->createDescriptorPoolUnique(create_info);
     }
@@ -786,7 +707,7 @@ private:
                 descriptor_set_layouts[1].get(), textures.size(),
                 descriptor_set_layouts[2].get(), materials.size(),
                 descriptor_set_layouts[3].get(), 1,
-                wave->VertexCount());
+                descriptor_set_layouts[4].get(), 3);
         }
         curr_fr = frame_resources[curr_frame = 0].get();
     }
@@ -797,7 +718,7 @@ private:
         size_t frag_pass_ub_size = sizeof(FragPassUB);
 
         size_t count_buffer = n_inflight_frames * (render_items.size() + materials.size() + 2);
-        size_t count_image = n_inflight_frames * textures.size();
+        size_t count_image = n_inflight_frames * (textures.size() + 3);
         std::vector<vk::WriteDescriptorSet> writes(count_buffer + count_image);
         std::vector<vk::DescriptorBufferInfo> buffer_infos(count_buffer);
         std::vector<vk::DescriptorImageInfo> image_infos(count_image);
@@ -843,9 +764,19 @@ private:
                 vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos[pb], nullptr);
             ++pb;
             ++p;
+            for (int j = 0; j < 3; j++) {
+                image_infos[pi] = vk::DescriptorImageInfo(samplers["linear_repeat"].get(), wave->GetImageView(j),
+                    vk::ImageLayout::eShaderReadOnlyOptimal);
+                writes[p] = vk::WriteDescriptorSet(frame_resources[i]->disp_set[j], 0, 0, 1,
+                    vk::DescriptorType::eCombinedImageSampler, &image_infos[pi], nullptr, nullptr);
+                ++pi;
+                ++p;
+            }
         }
 
         device->logical_device->updateDescriptorSets(writes, {});
+
+        wave->BuildAndWriteDescriptorSets(device.get(), descriptor_pool.get());
     }
     void BuildGraphicsPipeline() {
         std::array<vk::PipelineShaderStageCreateInfo, 2> shader_stages = {
@@ -903,23 +834,19 @@ private:
         create_info.setStageCount(shader_stages.size()).setPStages(shader_stages.data());
         graphics_pipelines["transparent"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
 
-        std::array<vk::PipelineShaderStageCreateInfo, 3> shader_stages_sprite = {
-            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex,
-                shader_modules["sprite_vert"].get(), "main"),
-            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eGeometry,
-                shader_modules["sprite_geom"].get(), "main"),
-            vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment,
-                shader_modules["sprite_frag"].get(), "main")
-        };
-        cb_attachment.setBlendEnable(VK_FALSE);
-        input_assembly.setTopology(vk::PrimitiveTopology::ePointList);
-        auto bind_description_sprite = SpriteVertex::BindDescription();
-        auto attribute_descriptions_sprite = SpriteVertex::AttributeDescriptions();
-        vertex_input.setPVertexBindingDescriptions(&bind_description_sprite)
-            .setVertexAttributeDescriptionCount(attribute_descriptions_sprite.size())
-            .setPVertexAttributeDescriptions(attribute_descriptions_sprite.data());
-        create_info.setStageCount(shader_stages_sprite.size()).setPStages(shader_stages_sprite.data());
-        graphics_pipelines["sprite"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
+        shader_stages[0] = vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eVertex,
+            shader_modules["vert_disp"].get(), "main");
+        graphics_pipelines["gpu_wave"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
+    }
+    void BuildComputePipeline() {
+        vk::PipelineShaderStageCreateInfo compute_shader({}, vk::ShaderStageFlagBits::eCompute,
+            shader_modules["wave_comp"].get(), "main");
+        vk::ComputePipelineCreateInfo create_info({}, compute_shader, wave->PipelineLayout());
+        compute_pipelines["wave"] = device->logical_device->createComputePipelineUnique({}, create_info);
+
+        compute_shader.setModule(shader_modules["wave_disturb_comp"].get());
+        create_info.setStage(compute_shader);
+        compute_pipelines["wave_disturb"] = device->logical_device->createComputePipelineUnique({}, create_info);
     }
 
     vk::UniqueRenderPass render_pass;
@@ -933,6 +860,7 @@ private:
     FrameResources *curr_fr = nullptr;
 
     std::unordered_map<std::string, vk::UniquePipeline> graphics_pipelines;
+    std::unordered_map<std::string, vk::UniquePipeline> compute_pipelines;
     std::unordered_map<std::string, vk::UniqueShaderModule> shader_modules;
     std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> geometries;
     std::unordered_map<std::string, std::unique_ptr<Material>> materials;
@@ -959,12 +887,11 @@ private:
 
     std::vector<std::unique_ptr<RenderItem>> render_items;
     std::vector<RenderItem *> items[static_cast<size_t>(RenderLayer::Count)];
-    RenderItem *wave_ritem;
 };
 
 int main() {
     try {
-        VulkanAppSprite app;
+        VulkanAppGpuWave app;
         app.Initialize();
         app.MainLoop();
     } catch (const std::runtime_error &e) {

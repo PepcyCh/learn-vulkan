@@ -1,0 +1,30 @@
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform UpdateUniform {
+    float k0;
+    float k1;
+    float k2;
+    float disturb_mag;
+    ivec2 disturb_ind;
+} wave;
+
+layout(set = 0, binding = 1, r32f) uniform image2D curr_solution;
+
+void main() {
+    int x = wave.disturb_ind.x;
+    int y = wave.disturb_ind.y;
+    float half_mag = 0.5f * wave.disturb_mag;
+
+    float center = imageLoad(curr_solution, ivec2(x, y)).x;
+    imageStore(curr_solution, ivec2(x, y), vec4(center + wave.disturb_mag));
+    float left = imageLoad(curr_solution, ivec2(x - 1, y)).x;
+    imageStore(curr_solution, ivec2(x - 1, y), vec4(left + half_mag));
+    float right = imageLoad(curr_solution, ivec2(x + 1, y)).x;
+    imageStore(curr_solution, ivec2(x + 1, y), vec4(left + half_mag));
+    float up = imageLoad(curr_solution, ivec2(x, y - 1)).x;
+    imageStore(curr_solution, ivec2(x - 1, y), vec4(up + half_mag));
+    float down = imageLoad(curr_solution, ivec2(x, y + 1)).x;
+    imageStore(curr_solution, ivec2(x + 1, y), vec4(down + half_mag));
+}

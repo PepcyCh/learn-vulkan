@@ -1,0 +1,30 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(push_constant) uniform UpdateUniform {
+    float k0;
+    float k1;
+    float k2;
+    float disturb_mag;
+    ivec2 disturb_ind;
+} wave;
+
+layout(set = 0, binding = 0, r32f) uniform image2D prev_solution;
+layout(set = 0, binding = 1, r32f) uniform image2D curr_solution;
+layout(set = 0, binding = 2, r32f) uniform image2D next_solution;
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+
+    float center_prev = imageLoad(prev_solution, ivec2(x, y)).x;
+    float center_curr = imageLoad(curr_solution, ivec2(x, y)).x;
+    float left_curr = imageLoad(curr_solution, ivec2(x - 1, y)).x;
+    float right_curr = imageLoad(curr_solution, ivec2(x + 1, y)).x;
+    float up_curr = imageLoad(curr_solution, ivec2(x, y - 1)).x;
+    float down_curr = imageLoad(curr_solution, ivec2(x, y + 1)).x;
+    float res = wave.k0 * center_prev + wave.k1 * center_curr + wave.k2 *
+        (left_curr + right_curr + up_curr + down_curr);
+    imageStore(next_solution, ivec2(x, y), vec4(res));
+}
