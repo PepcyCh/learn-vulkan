@@ -7,6 +7,7 @@
 #include "MathUtil.h"
 #include "VulkanUtil.h"
 #include "GeometryGenerator.h"
+#include "BlurFilter.h"
 
 using namespace pepcy;
 
@@ -50,9 +51,17 @@ Eigen::Vector3f GetHillNormal(float x, float z) {
 
 }
 
-class VulkanAppGpuWave : public VulkanApp {
+/*
+ * NOTE:
+ * I have created the swapchain with usage as { ColorAttachment | TransferSrc | TransferDst },
+ * but validation layer still say that my swapchain images don't have a TransferSrc or TransferDst usage
+ * when I try to put a barrier to transfer them to TransferSrcOptimal or TransferDstOptimal.
+ * Even so, it seems that this code works correctly...
+ */
+
+class VulkanAppGpuBlur : public VulkanApp {
 public:
-    ~VulkanAppGpuWave() {
+    ~VulkanAppGpuBlur() {
         if (device) {
             device->logical_device->waitIdle();
         }
@@ -65,6 +74,7 @@ public:
         main_command_buffer->begin(begin_info);
 
         wave = std::make_unique<Wave>(device.get(), 128, 128, 1.0f, 0.03f, 4.0f, 0.2f, main_command_buffer.get());
+        blur_filter = std::make_unique<BlurFilter>(device.get(), client_width, client_height);
 
         BuildRenderPass();
         BuildFramebuffers();
@@ -112,6 +122,20 @@ public:
     }
 
 private:
+    void CreateSwapchain() override {
+        auto swapchain_capability = device->physical_device.getSurfaceCapabilitiesKHR(surface.get());
+        auto supported_usage = swapchain_capability.supportedUsageFlags;
+        if (!(supported_usage & vk::ImageUsageFlagBits::eTransferSrc) ||
+            !(supported_usage & vk::ImageUsageFlagBits::eTransferDst)) {
+            throw std::runtime_error("Surface doesn't support swapchain image to be transfer src or transfer dst,"
+                                     "which is needed by this example.");
+        }
+
+        swapchain = std::make_unique<vku::Swapchain>(device.get(), surface.get(),
+            vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc |
+            vk::ImageUsageFlagBits::eTransferDst, client_width, client_height);
+    }
+
     void Update() override {
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
@@ -178,6 +202,10 @@ private:
         DrawItems(items[static_cast<size_t>(RenderLayer::GpuWave)]);
 
         command_buffers[curr_frame]->endRenderPass();
+
+        blur_filter->Execute(swapchain->images[image_index], 5, compute_pipelines["blur_hori"].get(),
+            compute_pipelines["blur_vert"].get(), command_buffers[curr_frame].get());
+
         command_buffers[curr_frame]->end();
 
         vk::Semaphore wait_semaphores[] = { image_available_semaphores[curr_frame].get() };
@@ -224,6 +252,8 @@ private:
             frame_buffers[i].reset(nullptr);
         }
         BuildFramebuffers();
+
+        blur_filter->OnResize(client_width, client_height);
 
         proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
@@ -405,19 +435,24 @@ private:
         pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
     void BuildShaderModules() {
-        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_wave/shaders/vert.spv",
+        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_blur/shaders/vert.spv",
             device->logical_device.get());
-        shader_modules["vert_disp"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_wave/shaders/vert_disp.spv",
+        shader_modules["vert_disp"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_blur/shaders/vert_disp.spv",
             device->logical_device.get());
-        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_wave/shaders/frag.spv",
+        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "13_cs_blur/shaders/frag.spv",
             device->logical_device.get());
         shader_modules["frag_alpha_test"] = VulkanUtil::CreateShaderModule(
-            src_path + "13_cs_wave/shaders/frag_alpha_test.spv", device->logical_device.get());
+            src_path + "13_cs_blur/shaders/frag_alpha_test.spv", device->logical_device.get());
 
         shader_modules["wave_comp"] = VulkanUtil::CreateShaderModule(
-            src_path + "13_cs_wave/shaders/wave.comp.spv", device->logical_device.get());
+            src_path + "13_cs_blur/shaders/wave.comp.spv", device->logical_device.get());
         shader_modules["wave_disturb_comp"] = VulkanUtil::CreateShaderModule(
-            src_path + "13_cs_wave/shaders/wave_disturb.comp.spv", device->logical_device.get());
+            src_path + "13_cs_blur/shaders/wave_disturb.comp.spv", device->logical_device.get());
+
+        shader_modules["blur_hori_comp"] = VulkanUtil::CreateShaderModule(
+            src_path + "13_cs_blur/shaders/blur_hori.comp.spv", device->logical_device.get());
+        shader_modules["blur_vert_comp"] = VulkanUtil::CreateShaderModule(
+            src_path + "13_cs_blur/shaders/blur_vert.comp.spv", device->logical_device.get());
     }
     void BuildLandGeometry() {
         GeometryGenerator geo_gen;
@@ -636,7 +671,7 @@ private:
         wave_ritem->vertex_buffer = wave_ritem->mesh->vertex_buffer->buffer.get();
         wave_ritem->index_buffer = wave_ritem->mesh->index_buffer->buffer.get();
         wave_ritem->mat = materials["water"].get();
-        wave_ritem->tex_transform = MathUtil::Scale({ 5.0f, 5.0f, 1.0f });
+        wave_ritem->tex_transform = MathUtil::Scale({ 5.0f, 5.0f, 1.0 });
         wave_ritem->n_index = wave_ritem->mesh->draw_args["grid"].n_index;
         wave_ritem->first_index = wave_ritem->mesh->draw_args["grid"].first_index;
         wave_ritem->vertex_offset = wave_ritem->mesh->draw_args["grid"].vertex_offset;
@@ -652,7 +687,7 @@ private:
         grid_ritem->vertex_buffer = grid_ritem->mesh->vertex_buffer->buffer.get();
         grid_ritem->index_buffer = grid_ritem->mesh->index_buffer->buffer.get();
         grid_ritem->mat = materials["grass"].get();
-        grid_ritem->tex_transform = MathUtil::Scale({ 5.0f, 5.0f, 1.0f });
+        grid_ritem->tex_transform = MathUtil::Scale({ 5.0f, 5.0f, 1.0 });
         grid_ritem->n_index = grid_ritem->mesh->draw_args["grid"].n_index;
         grid_ritem->first_index = grid_ritem->mesh->draw_args["grid"].first_index;
         grid_ritem->vertex_offset= grid_ritem->mesh->draw_args["grid"].vertex_offset;
@@ -680,6 +715,7 @@ private:
         size_t n_pass = n_inflight_frames;
         size_t n_disp = n_inflight_frames * 3;
         size_t n_wave = wave->DescriptorSetCount();
+        size_t n_blur = blur_filter->DescriptorSetCount();
 
         std::vector<vk::DescriptorPoolSize> pool_sizes = {
             // obj
@@ -696,8 +732,10 @@ private:
         };
         auto wave_pool_sizes = wave->DescriptorPoolSizes();
         std::copy(wave_pool_sizes.begin(), wave_pool_sizes.end(), std::back_inserter(pool_sizes));
+        auto blur_pool_sizes = blur_filter->DescriptorPoolSizes();
+        std::copy(blur_pool_sizes.begin(), blur_pool_sizes.end(), std::back_inserter(pool_sizes));
 
-        vk::DescriptorPoolCreateInfo create_info({}, n_obj + n_tex + n_mat + n_pass + n_disp + n_wave,
+        vk::DescriptorPoolCreateInfo create_info({}, n_obj + n_tex + n_mat + n_pass + n_disp + n_wave + n_blur,
             pool_sizes.size(), pool_sizes.data());
         descriptor_pool = device->logical_device->createDescriptorPoolUnique(create_info);
     }
@@ -779,6 +817,9 @@ private:
         device->logical_device->updateDescriptorSets(writes, {});
 
         wave->BuildAndWriteDescriptorSets(device.get(), descriptor_pool.get());
+
+        blur_filter->BuildDescriptorSets(descriptor_pool.get());
+        blur_filter->WriteDescriptorSets();
     }
     void BuildGraphicsPipeline() {
         std::array<vk::PipelineShaderStageCreateInfo, 2> shader_stages = {
@@ -849,6 +890,15 @@ private:
         compute_shader.setModule(shader_modules["wave_disturb_comp"].get());
         create_info.setStage(compute_shader);
         compute_pipelines["wave_disturb"] = device->logical_device->createComputePipelineUnique({}, create_info);
+
+        compute_shader.setModule(shader_modules["blur_hori_comp"].get());
+        create_info.setStage(compute_shader);
+        create_info.setLayout(blur_filter->PipelineLayout());
+        compute_pipelines["blur_hori"] = device->logical_device->createComputePipelineUnique({}, create_info);
+
+        compute_shader.setModule(shader_modules["blur_vert_comp"].get());
+        create_info.setStage(compute_shader);
+        compute_pipelines["blur_vert"] = device->logical_device->createComputePipelineUnique({}, create_info);
     }
 
     vk::UniqueRenderPass render_pass;
@@ -869,6 +919,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Texture>> textures;
     std::unordered_map<std::string, vk::UniqueSampler> samplers;
     std::unique_ptr<Wave> wave;
+    std::unique_ptr<BlurFilter> blur_filter;
 
     VertPassUB main_vert_pass_ub;
     FragPassUB main_frag_pass_ub;
@@ -893,7 +944,7 @@ private:
 
 int main() {
     try {
-        VulkanAppGpuWave app;
+        VulkanAppGpuBlur app;
         app.Initialize();
         app.MainLoop();
     } catch (const std::runtime_error &e) {

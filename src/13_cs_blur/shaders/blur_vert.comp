@@ -1,0 +1,54 @@
+#version 450
+
+layout(local_size_x = 1, local_size_y = 256, local_size_z = 1) in;
+
+layout(push_constant) uniform BlurCoe {
+    int blur_rad;
+    float w0;
+    float w1;
+    float w2;
+    float w3;
+    float w4;
+    float w5;
+    float w6;
+    float w7;
+    float w8;
+    float w9;
+    float w10;
+} coe;
+
+layout(set = 0, binding = 0, rgba8) uniform readonly image2D input_image;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D output_image;
+
+#define kMaxBlurRadius 5
+#define kCacheSize (256 + kMaxBlurRadius * 2)
+
+shared vec4 cache[kCacheSize];
+
+void main() {
+    float w[] = { coe.w0, coe.w1, coe.w2, coe.w3, coe.w4, coe.w5, coe.w6, coe.w7, coe.w8, coe.w9, coe.w10 };
+    ivec2 image_size = imageSize(input_image);
+    int W = image_size.x;
+    int H = image_size.y;
+    int local_x = int(gl_LocalInvocationID.x);
+    int local_y = int(gl_LocalInvocationID.y);
+    int global_x = int(gl_GlobalInvocationID.x);
+    int global_y = int(gl_GlobalInvocationID.y);
+
+    if (local_y < coe.blur_rad) {
+        int y = max(global_y - coe.blur_rad, 0);
+        cache[local_y] = imageLoad(input_image, ivec2(global_x, y));
+    } else if (local_y + coe.blur_rad >= 256) {
+        int y = min(global_y + coe.blur_rad, H - 1);
+        cache[local_y + coe.blur_rad * 2] = imageLoad(input_image, ivec2(global_x, y));
+    }
+    cache[local_y + coe.blur_rad] = imageLoad(input_image, min(ivec2(global_x, global_y), ivec2(W - 1, H - 1)));
+
+    groupMemoryBarrier();
+
+    vec4 blur_color = vec4(0.0f);
+    for (int i = 0; i < 2 * coe.blur_rad + 1; i++) {
+        blur_color += w[i] * cache[local_y + i];
+    }
+    imageStore(output_image, ivec2(global_x, global_y), blur_color);
+}

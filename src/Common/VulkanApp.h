@@ -43,7 +43,7 @@ protected:
     void InitializeVulkan();
 
     void CreateDevice();
-    void CreateSwapchain();
+    virtual void CreateSwapchain();
     void CreateCommandObjects();
     void CreateSyncObjects();
 
