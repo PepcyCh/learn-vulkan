@@ -21,7 +21,6 @@ void BlurFilter::OnResize(uint32_t new_width, uint32_t new_height) {
 
 void BlurFilter::Execute(vk::Image input_image, int blur_time, vk::Pipeline hori_pipeline,
     vk::Pipeline vert_pipeline, vk::CommandBuffer command_buffer) {
-    std::cerr << "BlurFilter::Execute" << std::endl;
     vk::ImageMemoryBarrier input_image_barrier(
         vk::AccessFlagBits::eColorAttachmentWrite, vk::AccessFlagBits::eTransferRead,
         vk::ImageLayout::ePresentSrcKHR, vk::ImageLayout::eTransferSrcOptimal,

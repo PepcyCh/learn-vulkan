@@ -13,7 +13,7 @@ Use CMake to build.
 
 ## TODO
 
-* [ ] Part 2 - D3D Foundation
+* [x] Part 2 - D3D Foundation
   * [x] chap. 6 - drawing I
   * [x] chap. 7 - drawing II
   * [x] chap. 8 - lighting
@@ -21,8 +21,8 @@ Use CMake to build.
   * [x] chap. 10 - blending
   * [x] chap. 11 - stenciling
   * [x] chap. 12 - geometry shader
-  * [ ] chap. 13 - compute shader
-  * [ ] chap. 14 - tessellation
+  * [x] chap. 13 - compute shader (no `13_cs_sobel`)
+  * [x] chap. 14 - tessellation
 * [ ] Part 3 - Topics
   * [ ] chap. 15 - first person camera & dynamic indexing
   * [ ] chap. 16 - instancing & frustum culling
