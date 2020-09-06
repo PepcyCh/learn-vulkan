@@ -34,18 +34,6 @@ enum class RenderLayer : size_t {
     Count
 };
 
-float GetHillHeight(float x, float z) {
-    return 0.3f * (z * std::sin(0.1f * x) + x * std::cos(0.1f * z));
-}
-Eigen::Vector3f GetHillNormal(float x, float z) {
-    Eigen::Vector3f norm(
-        -0.03f * z * std::cos(0.1f * x) - 0.3f * std::cos(0.1f * z),
-        1.0f,
-        -0.3f * std::sin(0.1f * x) + 0.03f * x * std::sin(0.1f * z)
-    );
-    return norm.normalized();
-}
-
 }
 
 class VulkanAppStenciling : public VulkanApp {
@@ -85,27 +73,6 @@ public:
 
         proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
-    void OnKey(int key, int action) override {
-        VulkanApp::OnKey(key, action);
-
-        float dt = timer.DeltaTime();
-        if (key == GLFW_KEY_A && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            skull_translation.x() += 10.f * dt;
-        } else if (key == GLFW_KEY_D && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            skull_translation.x() -= 10.f * dt;
-        } else if (key == GLFW_KEY_W && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            skull_translation.y() += 10.f * dt;
-        } else if (key == GLFW_KEY_S && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            skull_translation.y() -= 10.f * dt;
-        }
-        skull_translation.y() = std::max(skull_translation.y(), 0.0f);
-
-        Eigen::Matrix4f trans = MathUtil::Translate(skull_translation) * skull_rotation * skull_scaling;
-        skull_ritem->model = trans;
-        skull_ritem->n_frame_dirty = n_inflight_frames;
-        reflected_skull_ritem->model = MathUtil::Reflect({ 0.0f, 0.0f, 1.0f, 0.0f }) * trans;
-        reflected_skull_ritem->n_frame_dirty = n_inflight_frames;
-    }
     void OnMouse(double x, double y, uint32_t state) override {
         if (state & 1) {
             float dx = MathUtil::Radians(0.25 * (x - last_mouse.x));
@@ -125,6 +92,7 @@ public:
 
 private:
     void Update() override {
+        OnKey();
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
         AnimateMaterials();
@@ -225,6 +193,29 @@ private:
         }
     }
 
+
+    void OnKey() {
+        float dt = timer.DeltaTime();
+        if (glfwGetKey(glfw_window, GLFW_KEY_A) == GLFW_PRESS) {
+            skull_translation.x() += 3.0f * dt;
+        }
+        if (glfwGetKey(glfw_window, GLFW_KEY_D) == GLFW_PRESS) {
+            skull_translation.x() -= 3.0f * dt;
+        }
+        if (glfwGetKey(glfw_window, GLFW_KEY_W) == GLFW_PRESS) {
+            skull_translation.y() += 3.0f * dt;
+        }
+        if (glfwGetKey(glfw_window, GLFW_KEY_S) == GLFW_PRESS) {
+            skull_translation.y() -= 3.0f * dt;
+        }
+        skull_translation.y() = std::max(skull_translation.y(), 0.0f);
+
+        Eigen::Matrix4f trans = MathUtil::Translate(skull_translation) * skull_rotation * skull_scaling;
+        skull_ritem->model = trans;
+        skull_ritem->n_frame_dirty = n_inflight_frames;
+        reflected_skull_ritem->model = MathUtil::Reflect({ 0.0f, 0.0f, 1.0f, 0.0f }) * trans;
+        reflected_skull_ritem->n_frame_dirty = n_inflight_frames;
+    }
     void OnResize() override {
         VulkanApp::OnResize();
 

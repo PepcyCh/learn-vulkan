@@ -87,9 +87,6 @@ public:
 
         proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
-    void OnKey(int key, int action) override {
-        VulkanApp::OnKey(key, action);
-    }
     void OnMouse(double x, double y, uint32_t state) override {
         if (state & 1) {
             float dx = MathUtil::Radians(0.25 * (x - last_mouse.x));
@@ -109,6 +106,7 @@ public:
 
 private:
     void Update() override {
+        OnKey();
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
         AnimateMaterials();
@@ -202,6 +200,7 @@ private:
         }
     }
 
+    void OnKey() {}
     void OnResize() override {
         VulkanApp::OnResize();
 
@@ -620,6 +619,7 @@ private:
         wave_ritem->mesh = geometries["water_geo"].get();
         wave_ritem->index_buffer = wave_ritem->mesh->index_buffer->buffer.get();
         wave_ritem->mat = materials["water"].get();
+        wave_ritem->tex_transform = MathUtil::Scale({ 5.0f, 5.0f, 1.0f });
         wave_ritem->n_index = wave_ritem->mesh->draw_args["grid"].n_index;
         wave_ritem->first_index = wave_ritem->mesh->draw_args["grid"].first_index;
         wave_ritem->vertex_offset = wave_ritem->mesh->draw_args["grid"].vertex_offset;
@@ -634,6 +634,7 @@ private:
         grid_ritem->vertex_buffer = grid_ritem->mesh->vertex_buffer->buffer.get();
         grid_ritem->index_buffer = grid_ritem->mesh->index_buffer->buffer.get();
         grid_ritem->mat = materials["grass"].get();
+        grid_ritem->tex_transform = MathUtil::Scale({ 5.0f, 5.0f, 1.0f });
         grid_ritem->n_index = grid_ritem->mesh->draw_args["grid"].n_index;
         grid_ritem->first_index = grid_ritem->mesh->draw_args["grid"].first_index;
         grid_ritem->vertex_offset= grid_ritem->mesh->draw_args["grid"].vertex_offset;

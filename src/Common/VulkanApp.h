@@ -29,8 +29,6 @@ public:
     void MainLoop();
 
     void SignalResize();
-
-    virtual void OnKey(int key, int action);
     virtual void OnMouse(double x, double y, uint32_t state) = 0;
 
 protected:

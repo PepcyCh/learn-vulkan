@@ -4,6 +4,7 @@ add_library(vk_common
     Timer.cpp
     VulkanApp.cpp
     VulkanUtil.cpp
+    Camera.cpp
 )
 
 target_compile_features(vk_common PUBLIC cxx_std_17)

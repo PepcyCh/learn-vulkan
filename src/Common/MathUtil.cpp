@@ -13,10 +13,10 @@ float MathUtil::Lerp(float a, float b, float t) {
 Eigen::Vector3f MathUtil::TransformPoint(const Eigen::Matrix4f &mat, const Eigen::Vector3f &point) {
     auto temp = mat * Eigen::Vector4f(point.x(), point.y(), point.z(), 1.0f);
     float inv_w = 1.0f / temp.w();
-    return temp.topRows<3>() * inv_w;
+    return temp.head<3>() * inv_w;
 }
 Eigen::Vector3f MathUtil::TransformVector(const Eigen::Matrix4f &mat, const Eigen::Vector3f &vec) {
-    return (mat * Eigen::Vector4f(vec.x(), vec.y(), vec.z(), 0.0f)).topRows<3>();
+    return (mat * Eigen::Vector4f(vec.x(), vec.y(), vec.z(), 0.0f)).head<3>();
 }
 
 Eigen::Matrix4f MathUtil::AngelAxis(float angel, const Eigen::Vector3f &axis) {
@@ -50,15 +50,19 @@ Eigen::Matrix4f MathUtil::Reflect(const Eigen::Vector4f &plane) {
     return res;
 }
 
-Eigen::Matrix4f MathUtil::LookAt(const Eigen::Vector3f &eye, const Eigen::Vector3f &look_at,
-                                 const Eigen::Vector3f &up) {
-    Eigen::Vector3f w = (eye - look_at).normalized();
+Eigen::Matrix4f MathUtil::LookAt(const Eigen::Vector3f &pos, const Eigen::Vector3f &look_at,
+    const Eigen::Vector3f &up) {
+    Eigen::Vector3f w = (pos - look_at).normalized();
     Eigen::Vector3f u = up.cross(w).normalized();
     Eigen::Vector3f v = w.cross(u);
+    return ViewTransform(pos, u, v, w);
+}
+Eigen::Matrix4f MathUtil::ViewTransform(const Eigen::Vector3f &pos, const Eigen::Vector3f &u,
+    const Eigen::Vector3f &v, const Eigen::Vector3f &w) {
     Eigen::Matrix4f m;
-    m.row(0) = Eigen::Vector4f(u.x(), u.y(), u.z(), -u.dot(eye));
-    m.row(1) = Eigen::Vector4f(v.x(), v.y(), v.z(), -v.dot(eye));
-    m.row(2) = Eigen::Vector4f(w.x(), w.y(), w.z(), -w.dot(eye));
+    m.row(0) = Eigen::Vector4f(u.x(), u.y(), u.z(), -u.dot(pos));
+    m.row(1) = Eigen::Vector4f(v.x(), v.y(), v.z(), -v.dot(pos));
+    m.row(2) = Eigen::Vector4f(w.x(), w.y(), w.z(), -w.dot(pos));
     m.row(3) = Eigen::Vector4f(0.0f, 0.0f, 0.0f, 1.0f);
     return m;
 }

@@ -24,7 +24,7 @@ Use CMake to build.
   * [x] chap. 13 - compute shader (no `13_cs_sobel`)
   * [x] chap. 14 - tessellation
 * [ ] Part 3 - Topics
-  * [ ] chap. 15 - first person camera & dynamic indexing
+  * [x] chap. 15 - first person camera & dynamic indexing (only camera, dynamic indexing left to chap 16)
   * [ ] chap. 16 - instancing & frustum culling
   * [ ] chap. 17 - picking
   * [ ] chap. 18 - cube mapping

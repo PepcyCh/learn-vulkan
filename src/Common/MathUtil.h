@@ -24,8 +24,10 @@ public:
     static Eigen::Matrix4f Translate(const Eigen::Vector3f &trans);
     static Eigen::Matrix4f Reflect(const Eigen::Vector4f &plane);
 
-    static Eigen::Matrix4f LookAt(const Eigen::Vector3f &eye, const Eigen::Vector3f &look_at,
-                                  const Eigen::Vector3f &up);
+    static Eigen::Matrix4f LookAt(const Eigen::Vector3f &pos, const Eigen::Vector3f &look_at,
+        const Eigen::Vector3f &up);
+    static Eigen::Matrix4f ViewTransform(const Eigen::Vector3f &pos, const Eigen::Vector3f &right,
+        const Eigen::Vector3f &up, const Eigen::Vector3f &back);
     static Eigen::Matrix4f Perspective(float fov, float aspect, float near, float far, bool flip_y = false);
 
     static int RandI(int l, int r);

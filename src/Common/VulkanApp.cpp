@@ -12,8 +12,9 @@ void FrameBufferResizeCallback(GLFWwindow *window, int width, int height) {
     }
 }
 void KeyCallback(GLFWwindow *window, int key, int scancode, int action, int mods) {
-    auto app = reinterpret_cast<VulkanApp *>(glfwGetWindowUserPointer(window));
-    app->OnKey(key, action);
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, 1);
+    }
 }
 void CursorPosCallback(GLFWwindow *window, double x, double y) {
     auto app = reinterpret_cast<VulkanApp *>(glfwGetWindowUserPointer(window));
@@ -257,12 +258,6 @@ void VulkanApp::OnResize() {
 
     swapchain.reset(nullptr);
     CreateSwapchain();
-}
-
-void VulkanApp::OnKey(int key, int action) {
-    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
-        glfwSetWindowShouldClose(glfw_window, 1);
-    }
 }
 
 void VulkanApp::CalcFrameStats() {

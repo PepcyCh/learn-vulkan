@@ -81,28 +81,6 @@ public:
 
         proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
-    void OnKey(int key, int action) override {
-        VulkanApp::OnKey(key, action);
-
-        if (key == GLFW_KEY_1 && action == GLFW_PRESS) {
-            wireframe = !wireframe;
-        }
-
-        float dt = timer.DeltaTime();
-        if (key == GLFW_KEY_LEFT && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            sun_theta -= dt;
-        }
-        if (key == GLFW_KEY_RIGHT && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            sun_theta += dt;
-        }
-        if (key == GLFW_KEY_UP && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            sun_phi -= dt;
-        }
-        if (key == GLFW_KEY_DOWN && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            sun_phi += dt;
-        }
-        sun_phi = std::clamp(sun_phi, 0.1f, MathUtil::kPiDiv2);
-    }
     void OnMouse(double x, double y, uint32_t state) override {
         if (state & 1) {
             float dx = MathUtil::Radians(0.25 * (x - last_mouse.x));
@@ -122,6 +100,7 @@ public:
 
 private:
     void Update() override {
+        OnKey();
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
         UpdateWave();
@@ -211,6 +190,26 @@ private:
         }
     }
 
+    void OnKey() {
+        if (glfwGetKey(glfw_window, GLFW_KEY_1) == GLFW_PRESS) {
+            wireframe = !wireframe;
+        }
+
+        float dt = timer.DeltaTime();
+        if (glfwGetKey(glfw_window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+            sun_theta -= dt;
+        }
+        if (glfwGetKey(glfw_window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+            sun_theta += dt;
+        }
+        if (glfwGetKey(glfw_window, GLFW_KEY_UP) == GLFW_PRESS) {
+            sun_phi -= dt;
+        }
+        if (glfwGetKey(glfw_window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+            sun_phi += dt;
+        }
+        sun_phi = std::clamp(sun_phi, 0.1f, MathUtil::kPiDiv2);
+    }
     void OnResize() override {
         VulkanApp::OnResize();
 

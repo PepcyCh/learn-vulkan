@@ -69,13 +69,6 @@ public:
 
         proj = MathUtil::Perspective(MathUtil::kPi * 0.25f, Aspect(), 0.1f, 500.0f, true);
     }
-    void OnKey(int key, int action) override {
-        VulkanApp::OnKey(key, action);
-
-        if (key == GLFW_KEY_1 && action == GLFW_PRESS) {
-            wireframe = !wireframe;
-        }
-    }
     void OnMouse(double x, double y, uint32_t state) override {
         if (state & 1) {
             float dx = MathUtil::Radians(0.25 * (x - last_mouse.x));
@@ -95,6 +88,7 @@ public:
 
 private:
     void Update() override {
+        OnKey();
         UpdateCamera();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
         AnimateMaterials();
@@ -185,6 +179,11 @@ private:
         }
     }
 
+    void OnKey() {
+        if (glfwGetKey(glfw_window, GLFW_KEY_1) == GLFW_PRESS) {
+            wireframe = !wireframe;
+        }
+    }
     void OnResize() override {
         VulkanApp::OnResize();
 
