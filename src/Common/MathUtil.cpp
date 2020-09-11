@@ -1,5 +1,93 @@
 #include "MathUtil.h"
 
+Frustum::Frustum(const Eigen::Matrix4f &proj, bool proj_flip_y) {
+    origin = { 0.0f, 0.0f, 0.0f };
+    // ctor of Eigen::Quaternion is (w, x, y, z) instead of (x, y, z, w)
+    orientation = { 1.0f, 0.0f, 0.0f, 0.0f };
+
+    Eigen::Vector4f points[6] = {
+        { 1.0f, 0.0f, 1.0f, 1.0f },
+        { -1.0f, 0.0f, 1.0f, 1.0f },
+        { 0.0f, 1.0f, 1.0f, 1.0f },
+        { 0.0f, -1.0f, 1.0f, 1.0f },
+        { 0.0f, 0.0f, 0.0f, 1.0f },
+        { 0.0f, 0.0f, 1.0f, 1.0f }
+    };
+    Eigen::Matrix4f proj_inv = proj.inverse();
+    for (auto &point : points) {
+        point = proj_inv * point;
+    }
+
+    right_slope = points[0].x() / points[0].z(); // neg
+    left_slope = points[1].x() / points[1].z(); // pos
+    top_slope = points[2].y() / points[2].z(); // neg
+    bottom_slope = points[3].y() / points[3].z(); // pos
+    near = points[4].z() / points[4].w(); // neg
+    far = points[5].z() / points[5].w(); // neg
+    if (proj_flip_y) {
+        top_slope = -top_slope;
+        bottom_slope = -bottom_slope;
+    }
+}
+
+Containment Frustum::Contains(const BoundingBox &bbox) const {
+    Eigen::Vector3f bmax = bbox.center + bbox.extent - origin;
+    Eigen::Vector3f bmin = bbox.center - bbox.extent - origin;
+
+    Eigen::Vector3f plane_normal[6] = {
+        { -1.0f, 0.0f, right_slope },
+        { 1.0f, 0.0f, -left_slope },
+        { 0.0f, -1.0f, top_slope },
+        { 0.0f, 1.0f, -bottom_slope },
+        { 0.0f, 0.0f, -1.0f }, // near
+        { 0.0f, 0.0f, 1.0f }, // far
+    };
+    for (int i = 0; i < 6; i++) {
+        Eigen::Quaternion qtemp(0.0f, plane_normal[i].x(), plane_normal[i].y(), plane_normal[i].z());
+        qtemp = orientation * qtemp * orientation.conjugate();
+        plane_normal[i] = qtemp.vec();
+
+        Eigen::Vector3f P;
+        Eigen::Vector3f Q;
+        for (int j = 0; j < 3; j++) {
+            if (plane_normal[i][j] >= 0.0f) {
+                P[j] = bmin[j];
+                Q[j] = bmax[j];
+            } else {
+                P[j] = bmax[j];
+                Q[j] = bmin[j];
+            }
+        }
+
+        Eigen::Vector3f plane_point = { 0.0f, 0.0f, 0.0f };
+        if (i == 4) {
+            plane_point = { 0.0f, 0.0f, near };
+            qtemp.vec() = plane_point;
+            qtemp.w() = 0.0f;
+            qtemp = orientation * qtemp * orientation.conjugate();
+            plane_point = qtemp.vec();
+        } else if (i == 5) {
+            plane_point = { 0.0f, 0.0f, far };
+            qtemp.vec() = plane_point;
+            qtemp.w() = 0.0f;
+            qtemp = orientation * qtemp * orientation.conjugate();
+            plane_point = qtemp.vec();
+        }
+        Eigen::Vector3f tp = P - plane_point;
+        Eigen::Vector3f tq = Q - plane_point;
+
+        if (tp.dot(plane_normal[i]) <= 0.0f) {
+            if (tq.dot(plane_normal[i]) > 0.0f) {
+                return Containment::eIntersects;
+            } else {
+                return Containment::eDisjoint;
+            }
+        }
+    }
+
+    return Containment::eContains;
+}
+
 float MathUtil::Radians(float degree) {
     return degree / 180.0f * kPi;
 }
@@ -17,6 +105,40 @@ Eigen::Vector3f MathUtil::TransformPoint(const Eigen::Matrix4f &mat, const Eigen
 }
 Eigen::Vector3f MathUtil::TransformVector(const Eigen::Matrix4f &mat, const Eigen::Vector3f &vec) {
     return (mat * Eigen::Vector4f(vec.x(), vec.y(), vec.z(), 0.0f)).head<3>();
+}
+
+BoundingBox MathUtil::TransformBoundingBox(const Eigen::Matrix4f &mat, const BoundingBox &bbox) {
+    Eigen::Vector3f p0 = TransformPoint(mat, { -bbox.extent.x(), -bbox.extent.y(), -bbox.extent.z() });
+    Eigen::Vector3f p1 = TransformPoint(mat, { -bbox.extent.x(), -bbox.extent.y(),  bbox.extent.z() });
+    Eigen::Vector3f p2 = TransformPoint(mat, { -bbox.extent.x(),  bbox.extent.y(), -bbox.extent.z() });
+    Eigen::Vector3f p3 = TransformPoint(mat, { -bbox.extent.x(),  bbox.extent.y(),  bbox.extent.z() });
+    Eigen::Vector3f p4 = TransformPoint(mat, {  bbox.extent.x(), -bbox.extent.y(), -bbox.extent.z() });
+    Eigen::Vector3f p5 = TransformPoint(mat, {  bbox.extent.x(), -bbox.extent.y(),  bbox.extent.z() });
+    Eigen::Vector3f p6 = TransformPoint(mat, {  bbox.extent.x(),  bbox.extent.y(), -bbox.extent.z() });
+    Eigen::Vector3f p7 = TransformPoint(mat, {  bbox.extent.x(),  bbox.extent.y(),  bbox.extent.z() });
+    Eigen::Vector3f max = p0.cwiseMax(p1).cwiseMax(p2).cwiseMax(p3).cwiseMax(p4).cwiseMax(p5).cwiseMax(p6).cwiseMax(p7);
+    return { TransformPoint(mat, bbox.center), max };
+}
+
+Frustum MathUtil::TransformFrustum(const Eigen::Matrix4f &mat, const Frustum &frustum) {
+    Eigen::Matrix3f rotation_mat;
+    rotation_mat.col(0) = mat.col(0).head<3>().normalized();
+    rotation_mat.col(1) = mat.col(1).head<3>().normalized();
+    rotation_mat.col(2) = mat.col(2).head<3>().normalized();
+    Eigen::Quaternionf rotation_q(rotation_mat);
+
+    float sx = mat.col(0).head<3>().norm();
+    float sy = mat.col(1).head<3>().norm();
+    float sz = mat.col(2).head<3>().norm();
+    float scale = std::max({ sx, sy, sz });
+
+    Frustum res = frustum;
+    res.orientation = rotation_q * frustum.orientation;
+    res.origin = TransformPoint(mat, frustum.origin);
+    res.near = scale * frustum.near;
+    res.far = scale * frustum.far;
+
+    return res;
 }
 
 Eigen::Matrix4f MathUtil::AngelAxis(float angel, const Eigen::Vector3f &axis) {

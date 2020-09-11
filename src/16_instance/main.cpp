@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 
 #include "../defines.h"
 #include "Camera.h"
@@ -19,8 +20,11 @@ struct RenderItem {
     uint32_t n_index = 0;
     uint32_t first_index = 0;
     int vertex_offset = 0;
+    uint32_t n_instance = 1;
     size_t obj_index = 0;
     uint32_t n_frame_dirty = 0;
+    std::vector<InstanceData> instance_data;
+    BoundingBox bbox;
 };
 
 enum class RenderLayer : size_t {
@@ -32,9 +36,9 @@ enum class RenderLayer : size_t {
 
 }
 
-class VulkanAppCamera : public VulkanApp {
+class VulkanAppInstance : public VulkanApp {
 public:
-    ~VulkanAppCamera() {
+    ~VulkanAppInstance() {
         if (device) {
             device->logical_device->waitIdle();
         }
@@ -43,7 +47,7 @@ public:
     void Initialize() override {
         VulkanApp::Initialize();
 
-        cam.LookAt({ 0.0f, 2.0f, -15.0f }, { 0.0f, 2.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
+        cam.LookAt({ 0.0f, 0.0f, -15.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f });
         cam.SetLens(MathUtil::kPiDiv4, Aspect(), 0.5f, 500.0f);
 
         vk::CommandBufferBeginInfo begin_info(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
@@ -51,13 +55,13 @@ public:
 
         BuildRenderPass();
         BuildFramebuffers();
-        BuildLayouts();
-        BuildShaderModules();
-        BuildGeometries();
+        BuildSkullGeometry();
         BuildSamplers();
         BuildTextures();
         BuildMaterials();
         BuildRenderItems();
+        BuildLayouts();
+        BuildShaderModules();
         BuildDescriptorPool();
         BuildFrameResources();
         WriteDescriptorSets();
@@ -85,9 +89,9 @@ private:
         OnKey();
         cam.UpdateViewMatrix();
         device->logical_device->waitForFences({ fences[curr_frame].get() }, VK_TRUE, UINT64_MAX);
-        UpdateObjectUniform();
+        UpdateInstanceData();
         UpdatePassUniform();
-        UpdateMaterialUniform();
+        UpdateMaterialData();
     }
     void Draw() override {
         auto [result, image_index] = device->logical_device->acquireNextImageKHR(swapchain->swapchain.get(),
@@ -107,8 +111,8 @@ private:
         vk::CommandBufferBeginInfo buffer_begin_info(vk::CommandBufferUsageFlagBits::eOneTimeSubmit);
         command_buffers[curr_frame]->begin(buffer_begin_info);
 
-        command_buffers[curr_frame]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout.get(), 3,
-            { curr_fr->pass_set[0] }, {});
+        command_buffers[curr_frame]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout.get(), 0,
+            { curr_fr->obj_set[0], curr_fr->tex_set[0], curr_fr->mat_set[0], curr_fr->pass_set[0] }, {});
 
         std::array<float, 4> clear_color = {
             main_frag_pass_ub.fog_color.x(), main_frag_pass_ub.fog_color.y(),
@@ -167,14 +171,11 @@ private:
     }
     void DrawItems(const std::vector<RenderItem *> &items) {
         for (RenderItem *item : items) {
-            command_buffers[curr_frame]->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline_layout.get(), 0,
-                { curr_fr->obj_set[item->obj_index], curr_fr->tex_set[item->mat->diffuse_tex_index],
-                    curr_fr->mat_set[item->mat->mat_index] }, {});
-
             auto mesh = item->mesh;
             command_buffers[curr_frame]->bindVertexBuffers(0, { item->mesh->vertex_buffer->buffer.get() }, { 0 });
             command_buffers[curr_frame]->bindIndexBuffer(item->mesh->index_buffer->buffer.get(), 0, mesh->index_type);
-            command_buffers[curr_frame]->drawIndexed(item->n_index, 1, item->first_index, item->vertex_offset, 0);
+            command_buffers[curr_frame]->drawIndexed(item->n_index, item->n_instance, item->first_index,
+                item->vertex_offset, 0);
         }
     }
 
@@ -205,16 +206,32 @@ private:
         cam.SetLens(cam.Fov(), Aspect(), cam.Near(), cam.Far());
     }
 
-    void UpdateObjectUniform() {
-        for (const auto &item : render_items) {
-            if (item->n_frame_dirty > 0) {
-                ObjectUB ub;
-                ub.model = item->model;
-                ub.model_it = item->model.transpose().inverse();
-                ub.tex_transform = item->tex_transform;
-                curr_fr->obj_ub->CopyData(item->obj_index, ub);
-                --item->n_frame_dirty;
+    void UpdateInstanceData() {
+        Eigen::Matrix4f view = cam.View();
+        Eigen::Matrix4f view_inv = view.inverse();
+        Eigen::Matrix4f proj = cam.Proj();
+
+        Frustum frustum(proj, true);
+        frustum = MathUtil::TransformFrustum(view_inv, frustum);
+
+        for (auto &item : render_items) {
+            uint32_t n_visible_instance = 0;
+            for (size_t i = 0; i < item->instance_data.size(); i++) {
+                Eigen::Matrix4f model = item->instance_data[i].model;
+                Eigen::Matrix4f model_inv = model.inverse();
+
+                if (frustum.Contains(MathUtil::TransformBoundingBox(model, item->bbox)) != Containment::eDisjoint) {
+                // {
+                    InstanceData data;
+                    data.model = model;
+                    data.model_it = model_inv.transpose();
+                    data.tex_transform = item->instance_data[i].tex_transform;
+                    data.mat_index = item->instance_data[i].mat_index;
+                    curr_fr->obj_ub->CopyData(n_visible_instance, data);
+                    ++n_visible_instance;
+                }
             }
+            item->n_instance = n_visible_instance;
         }
     }
     void UpdatePassUniform() {
@@ -234,17 +251,19 @@ private:
         main_frag_pass_ub.lights[1].strength = { 0.3f, 0.3f, 0.3f };
         main_frag_pass_ub.lights[2].direction = { 0.0f, -0.707f, -0.707f };
         main_frag_pass_ub.lights[2].strength = { 0.15f, 0.15f, 0.15f };
+        main_frag_pass_ub.fog_end = 500.0f;
         curr_fr->frag_pass_ub->CopyData(0, main_frag_pass_ub);
     }
-    void UpdateMaterialUniform() {
+    void UpdateMaterialData() {
         for (const auto &[_, mat] : materials) {
             if (mat->n_frame_dirty > 0) {
-                MaterialUB ub;
-                ub.albedo = mat->albedo;
-                ub.fresnel_r0 = mat->fresnel_r0;
-                ub.roughness = mat->roughness;
-                ub.mat_transform = mat->mat_transform;
-                curr_fr->mat_ub->CopyData(mat->mat_index, ub);
+                MaterialData data;
+                data.albedo = mat->albedo;
+                data.fresnel_r0 = mat->fresnel_r0;
+                data.roughness = mat->roughness;
+                data.mat_transform = mat->mat_transform;
+                data.diffuse_index = mat->diffuse_tex_index;
+                curr_fr->mat_ub->CopyData(mat->mat_index, data);
                 --mat->n_frame_dirty;
             }
         }
@@ -299,14 +318,14 @@ private:
 
         std::array<vk::DescriptorSetLayoutBinding, 1> obj_bindings = {
             // obj ub
-            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex),
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eVertex),
         };
         vk::DescriptorSetLayoutCreateInfo obj_create_info({}, obj_bindings.size(), obj_bindings.data());
         descriptor_set_layouts[0] = device->logical_device->createDescriptorSetLayoutUnique(obj_create_info);
 
         std::array<vk::DescriptorSetLayoutBinding, 1> tex_bindings = {
             // tex cis
-            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eCombinedImageSampler, 1,
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eCombinedImageSampler, textures.size(),
                 vk::ShaderStageFlagBits::eFragment),
         };
         vk::DescriptorSetLayoutCreateInfo tex_create_info({}, tex_bindings.size(), tex_bindings.data());
@@ -314,7 +333,7 @@ private:
 
         std::array<vk::DescriptorSetLayoutBinding, 1> mat_bindings = {
             // mat ub
-            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eFragment),
+            vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment),
         };
         vk::DescriptorSetLayoutCreateInfo mat_create_info({}, mat_bindings.size(), mat_bindings.data());
         descriptor_set_layouts[2] = device->logical_device->createDescriptorSetLayoutUnique(mat_create_info);
@@ -333,107 +352,61 @@ private:
         pipeline_layout = device->logical_device->createPipelineLayoutUnique(pipeline_layout_create_info);
     }
     void BuildShaderModules() {
-        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "15_camera/shaders/P3N3T2.vert.spv",
+        shader_modules["vert"] = VulkanUtil::CreateShaderModule(src_path + "16_instance/shaders/P3N3T2.vert.spv",
             device->logical_device.get());
-        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "15_camera/shaders/P3N3T2.frag.spv",
+        shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "16_instance/shaders/P3N3T2.frag.spv",
             device->logical_device.get());
         shader_modules["frag_alpha_test"] = VulkanUtil::CreateShaderModule(
-            src_path + "15_camera/shaders/P3N3T2_alpha_test.frag.spv", device->logical_device.get());
+            src_path + "16_instance/shaders/P3N3T2_alpha_test.frag.spv", device->logical_device.get());
     }
-    void BuildGeometries() {
-        GeometryGenerator geo_gen;
-        GeometryGenerator::MeshData box = geo_gen.Box(1.5f, 1.5f, 1.5f, 3);
-        GeometryGenerator::MeshData grid = geo_gen.Grid(20.0f, 30.0f, 60, 40);
-        GeometryGenerator::MeshData sphere = geo_gen.Sphere(0.5f, 20, 20);
-        GeometryGenerator::MeshData cylinder = geo_gen.Cylinder(0.5f, 0.3f, 3.0f, 20, 20);
-        GeometryGenerator::MeshData geosphere = geo_gen.Geosphere(0.5f, 2);
-
-        // concatenate all the geometry into one big vertex/index buffer
-
-        // vertex offsets to each object
-        uint32_t box_vertex_offset = 0;
-        uint32_t grid_vertex_offset = box.vertices.size();
-        uint32_t sphere_vertex_offset = grid_vertex_offset + grid.vertices.size();
-        uint32_t cylinder_vertex_offset = sphere_vertex_offset + sphere.vertices.size();
-        uint32_t geosphere_vertex_offset = cylinder_vertex_offset + cylinder.vertices.size();
-
-        // starting index for each object
-        uint32_t box_index_offset = 0;
-        uint32_t grid_index_offset = box.indices32.size();
-        uint32_t sphere_index_offset = grid_index_offset + grid.indices32.size();
-        uint32_t cylinder_index_offset = sphere_index_offset + sphere.indices32.size();
-        uint32_t geosphere_index_offset = cylinder_index_offset + cylinder.indices32.size();
-
-        // define submeshes
-        SubmeshGeometry box_submesh;
-        box_submesh.n_index = box.indices32.size();
-        box_submesh.first_index = box_index_offset;
-        box_submesh.vertex_offset = box_vertex_offset;
-
-        SubmeshGeometry grid_submesh;
-        grid_submesh.n_index = grid.indices32.size();
-        grid_submesh.first_index = grid_index_offset;
-        grid_submesh.vertex_offset = grid_vertex_offset;
-
-        SubmeshGeometry sphere_submesh;
-        sphere_submesh.n_index = sphere.indices32.size();
-        sphere_submesh.first_index = sphere_index_offset;
-        sphere_submesh.vertex_offset = sphere_vertex_offset;
-
-        SubmeshGeometry cylinder_submesh;
-        cylinder_submesh.n_index = cylinder.indices32.size();
-        cylinder_submesh.first_index = cylinder_index_offset;
-        cylinder_submesh.vertex_offset = cylinder_vertex_offset;
-
-        SubmeshGeometry geosphere_submesh;
-        geosphere_submesh.n_index = geosphere.indices32.size();
-        geosphere_submesh.first_index = geosphere_index_offset;
-        geosphere_submesh.vertex_offset = geosphere_vertex_offset;
-
-        // extract the vertex elements we are interested in and pack the
-        // vertices of all the meshes into one vertex buffer.
-        auto total_vertex_cnt = box.vertices.size() + grid.vertices.size() +
-            sphere.vertices.size() + cylinder.vertices.size() + geosphere.vertices.size();
-        std::vector<Vertex> vertices(total_vertex_cnt);
-        uint32_t k = 0;
-        for (size_t i = 0; i < box.vertices.size(); i++, k++) {
-            vertices[k].pos = box.vertices[i].pos;
-            vertices[k].norm = box.vertices[i].norm;
-            vertices[k].texc = box.vertices[i].texc;
-        }
-        for (size_t i = 0; i < grid.vertices.size(); i++, k++) {
-            vertices[k].pos = grid.vertices[i].pos;
-            vertices[k].norm = grid.vertices[i].norm;
-            vertices[k].texc = grid.vertices[i].texc;
-        }
-        for (size_t i = 0; i < sphere.vertices.size(); i++, k++) {
-            vertices[k].pos = sphere.vertices[i].pos;
-            vertices[k].norm = sphere.vertices[i].norm;
-            vertices[k].texc = sphere.vertices[i].texc;
-        }
-        for (size_t i = 0; i < cylinder.vertices.size(); i++, k++) {
-            vertices[k].pos = cylinder.vertices[i].pos;
-            vertices[k].norm = cylinder.vertices[i].norm;
-            vertices[k].texc = cylinder.vertices[i].texc;
-        }
-        for (size_t i = 0; i < geosphere.vertices.size(); i++, k++) {
-            vertices[k].pos = geosphere.vertices[i].pos;
-            vertices[k].norm = geosphere.vertices[i].norm;
-            vertices[k].texc = geosphere.vertices[i].texc;
+    void BuildSkullGeometry() {
+        std::ifstream fin(root_path + "models/skull.txt");
+        if (!fin) {
+            std::cerr << "skull.txt not found" << std::endl;
+            return;
         }
 
-        std::vector<uint16_t> indices;
-        indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
-        indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
-        indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
-        indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
-        indices.insert(indices.end(), std::begin(geosphere.GetIndices16()), std::end(geosphere.GetIndices16()));
+        int n_vertex, n_triangle;
+        std::string ignore;
+        fin >> ignore >> n_vertex;
+        fin >> ignore >> n_triangle;
+        fin >> ignore >> ignore >> ignore >> ignore;
+
+        std::vector<Vertex> vertices(n_vertex);
+        for (int i = 0; i < n_vertex; i++) {
+            fin >> vertices[i].pos.x() >> vertices[i].pos.y() >> vertices[i].pos.z();
+            fin >> vertices[i].norm.x() >> vertices[i].norm.y() >> vertices[i].norm.z();
+
+            Eigen::Vector3f sphere_pos = vertices[i].pos.normalized();
+            float theta = std::atan2(sphere_pos.z(), sphere_pos.x());
+            if (theta < 0.0f) {
+                theta += MathUtil::k2Pi;
+            }
+            float phi = std::acos(sphere_pos.y());
+            float u = theta / MathUtil::k2Pi;
+            float v = phi / MathUtil::kPi;
+            vertices[i].texc = { u, v };
+        }
+
+        Eigen::Vector3f pmin = vertices[0].pos;
+        Eigen::Vector3f pmax = vertices[0].pos;
+        for (int i = 1; i < n_vertex; i++) {
+            pmin = pmin.cwiseMin(vertices[i].pos);
+            pmax = pmax.cwiseMax(vertices[i].pos);
+        }
+
+        fin >> ignore >> ignore >> ignore;
+        std::vector<uint16_t> indices(n_triangle * 3);
+        for (int i = 0; i < n_triangle; i++) {
+            fin >> indices[3 * i] >> indices[3 * i + 1] >> indices[3 * i + 2];
+        }
+        fin.close();
 
         uint32_t vb_size = vertices.size() * sizeof(Vertex);
-        uint32_t ib_size = indices.size()  * sizeof(uint16_t);
+        uint32_t ib_size = indices.size() * sizeof(uint16_t);
 
         auto geo = std::make_unique<MeshGeometry>();
-        geo->name = "shape_geo";
+        geo->name = "skull_geo";
 
         geo->vertex_data.resize(vb_size);
         memcpy(geo->vertex_data.data(), vertices.data(), vb_size);
@@ -450,11 +423,12 @@ private:
         geo->index_type = vk::IndexType::eUint16;
         geo->ib_size = ib_size;
 
-        geo->draw_args["box"] = box_submesh;
-        geo->draw_args["grid"] = grid_submesh;
-        geo->draw_args["sphere"] = sphere_submesh;
-        geo->draw_args["cylinder"] = cylinder_submesh;
-        geo->draw_args["geosphere"] = geosphere_submesh;
+        SubmeshGeometry submesh;
+        submesh.n_index = indices.size();
+        submesh.first_index = 0;
+        submesh.vertex_offset = 0;
+        submesh.bbox = { 0.5f * (pmin + pmax), 0.5f * (pmax - pmin) };
+        geo->draw_args["skull"] = submesh;
 
         geometries[geo->name] = std::move(geo);
     }
@@ -489,11 +463,11 @@ private:
     void BuildTextures() {
         size_t tex_index = 0;
 
-        auto crate_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/LunarG.dds",
+        auto ice_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/ice.dds",
             main_command_buffer.get());
-        crate_tex->name = "crate";
-        crate_tex->tex_index = tex_index++;
-        textures[crate_tex->name] = std::move(crate_tex);
+        ice_tex->name = "ice";
+        ice_tex->tex_index = tex_index++;
+        textures[ice_tex->name] = std::move(ice_tex);
 
         auto tile_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/tile.dds",
             main_command_buffer.get());
@@ -512,19 +486,31 @@ private:
         bricks_tex->name = "bricks";
         bricks_tex->tex_index = tex_index++;
         textures[bricks_tex->name] = std::move(bricks_tex);
+
+        auto grass_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/grass.dds",
+            main_command_buffer.get());
+        grass_tex->name = "grass";
+        grass_tex->tex_index = tex_index++;
+        textures[grass_tex->name] = std::move(grass_tex);
+
+        auto white_tex = VulkanUtil::LoadTextureFromFile(device.get(), root_path + "textures/white1x1.dds",
+            main_command_buffer.get());
+        white_tex->name = "white";
+        white_tex->tex_index = tex_index++;
+        textures[white_tex->name] = std::move(white_tex);
     }
     void BuildMaterials() {
         size_t mat_index = 0;
 
-        auto crate = std::make_unique<Material>();
-        crate->name = "crate";
-        crate->mat_index = mat_index++;
-        crate->n_frame_dirty = n_inflight_frames;
-        crate->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
-        crate->fresnel_r0 = { 0.01f, 0.01f, 0.01f };
-        crate->roughness = 0.2f;
-        crate->diffuse_tex_index = textures["crate"]->tex_index;
-        materials[crate->name] = std::move(crate);
+        auto ice = std::make_unique<Material>();
+        ice->name = "ice";
+        ice->mat_index = mat_index++;
+        ice->n_frame_dirty = n_inflight_frames;
+        ice->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+        ice->fresnel_r0 = { 0.01f, 0.01f, 0.01f };
+        ice->roughness = 0.2f;
+        ice->diffuse_tex_index = textures["ice"]->tex_index;
+        materials[ice->name] = std::move(ice);
 
         auto tile = std::make_unique<Material>();
         tile->name = "tile";
@@ -555,97 +541,83 @@ private:
         bricks->roughness = 0.1f;
         bricks->diffuse_tex_index = textures["bricks"]->tex_index;
         materials[bricks->name] = std::move(bricks);
+
+        auto grass = std::make_unique<Material>();
+        grass->name = "grass";
+        grass->mat_index = mat_index++;
+        grass->n_frame_dirty = n_inflight_frames;
+        grass->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+        grass->fresnel_r0 = { 0.2f, 0.2f, 0.2f };
+        grass->roughness = 0.3f;
+        grass->diffuse_tex_index = textures["grass"]->tex_index;
+        materials[grass->name] = std::move(grass);
+
+        auto white = std::make_unique<Material>();
+        white->name = "white";
+        white->mat_index = mat_index++;
+        white->n_frame_dirty = n_inflight_frames;
+        white->albedo = { 1.0f, 1.0f, 1.0f, 1.0f };
+        white->fresnel_r0 = { 0.2f, 0.2f, 0.2f };
+        white->roughness = 0.1f;
+        white->diffuse_tex_index = textures["white"]->tex_index;
+        materials[white->name] = std::move(white);
     }
     void BuildRenderItems() {
         uint32_t obj_index = 0;
+        n_instance = 0;
 
-        auto box_item = std::make_unique<RenderItem>();
-        box_item->obj_index = obj_index++;
-        box_item->n_frame_dirty = n_inflight_frames;
-        box_item->model = MathUtil::Translate({ 0.0f, 1.5f, 0.0f }) * MathUtil::Scale({ 2.0f, 2.0f, 2.0f });
-        box_item->mat = materials["crate"].get();
-        box_item->mesh = geometries["shape_geo"].get();
-        box_item->n_index = box_item->mesh->draw_args["box"].n_index;
-        box_item->first_index = box_item->mesh->draw_args["box"].first_index;
-        box_item->vertex_offset = box_item->mesh->draw_args["box"].vertex_offset;
-        render_items.emplace_back(std::move(box_item));
+        uint32_t n = 5;
+        auto skull_item = std::make_unique<RenderItem>();
+        skull_item->obj_index = obj_index++;
+        skull_item->n_frame_dirty = n_inflight_frames;
+        skull_item->model = MathUtil::Translate({ 0.0f, 1.5f, 0.0f }) * MathUtil::Scale({ 2.0f, 2.0f, 2.0f });
+        skull_item->mat = materials["white"].get();
+        skull_item->mesh = geometries["skull_geo"].get();
+        skull_item->n_index = skull_item->mesh->draw_args["skull"].n_index;
+        skull_item->first_index = skull_item->mesh->draw_args["skull"].first_index;
+        skull_item->vertex_offset = skull_item->mesh->draw_args["skull"].vertex_offset;
+        skull_item->bbox = skull_item->mesh->draw_args["skull"].bbox;
+        skull_item->n_instance = n * n * n;
+        n_instance += n * n * n;
 
-        auto grid_item = std::make_unique<RenderItem>();
-        grid_item->obj_index = obj_index++;
-        grid_item->n_frame_dirty = n_inflight_frames;
-        grid_item->mat = materials["tile"].get();
-        grid_item->tex_transform = MathUtil::Scale({ 8.0f, 8.0f, 8.0f });
-        grid_item->mesh = geometries["shape_geo"].get();
-        grid_item->n_index = grid_item->mesh->draw_args["grid"].n_index;
-        grid_item->first_index = grid_item->mesh->draw_args["grid"].first_index;
-        grid_item->vertex_offset = grid_item->mesh->draw_args["grid"].vertex_offset;
-        render_items.emplace_back(std::move(grid_item));
-
-        for (int i = 0; i < 5; i++) {
-            auto left_cylinder_item = std::make_unique<RenderItem>();
-            auto right_cylinder_item = std::make_unique<RenderItem>();
-            auto left_sphere_item = std::make_unique<RenderItem>();
-            auto right_sphere_item = std::make_unique<RenderItem>();
-
-            left_cylinder_item->obj_index = obj_index++;
-            left_cylinder_item->n_frame_dirty = n_inflight_frames;
-            left_cylinder_item->model = MathUtil::Translate({ -5.0f, 1.5f, -10.0f + i * 5.0f });
-            left_cylinder_item->mat = materials["bricks"].get();
-            left_cylinder_item->mesh = geometries["shape_geo"].get();
-            left_cylinder_item->n_index = left_cylinder_item->mesh->draw_args["cylinder"].n_index;
-            left_cylinder_item->first_index = left_cylinder_item->mesh->draw_args["cylinder"].first_index;
-            left_cylinder_item->vertex_offset = left_cylinder_item->mesh->draw_args["cylinder"].vertex_offset;
-
-            right_cylinder_item->obj_index = obj_index++;
-            right_cylinder_item->n_frame_dirty = n_inflight_frames;
-            right_cylinder_item->model = MathUtil::Translate({ 5.0f, 1.5f, -10.0f + i * 5.0f });
-            right_cylinder_item->mat = materials["bricks"].get();
-            right_cylinder_item->mesh = geometries["shape_geo"].get();
-            right_cylinder_item->n_index = right_cylinder_item->mesh->draw_args["cylinder"].n_index;
-            right_cylinder_item->first_index = right_cylinder_item->mesh->draw_args["cylinder"].first_index;
-            right_cylinder_item->vertex_offset = right_cylinder_item->mesh->draw_args["cylinder"].vertex_offset;
-
-            left_sphere_item->obj_index = obj_index++;
-            left_sphere_item->n_frame_dirty = n_inflight_frames;
-            left_sphere_item->model = MathUtil::Translate({ -5.0f, 3.5f, -10.0f + i * 5.0f });
-            left_sphere_item->mat = materials["stone"].get();
-            left_sphere_item->mesh = geometries["shape_geo"].get();
-            left_sphere_item->n_index = left_sphere_item->mesh->draw_args["sphere"].n_index;
-            left_sphere_item->first_index = left_sphere_item->mesh->draw_args["sphere"].first_index;
-            left_sphere_item->vertex_offset = left_sphere_item->mesh->draw_args["sphere"].vertex_offset;
-
-            right_sphere_item->obj_index = obj_index++;
-            right_sphere_item->n_frame_dirty = n_inflight_frames;
-            right_sphere_item->model = MathUtil::Translate({ 5.0f, 3.5f, -10.0f + i * 5.0f });
-            right_sphere_item->mat = materials["stone"].get();
-            right_sphere_item->mesh = geometries["shape_geo"].get();
-            right_sphere_item->n_index = right_sphere_item->mesh->draw_args["geosphere"].n_index;
-            right_sphere_item->first_index = right_sphere_item->mesh->draw_args["geosphere"].first_index;
-            right_sphere_item->vertex_offset = right_sphere_item->mesh->draw_args["geosphere"].vertex_offset;
-
-            render_items.emplace_back(std::move(left_cylinder_item));
-            render_items.emplace_back(std::move(right_cylinder_item));
-            render_items.emplace_back(std::move(left_sphere_item));
-            render_items.emplace_back(std::move(right_sphere_item));
+        skull_item->instance_data.resize(n * n * n);
+        float width = 200.0f;
+        float height = 200.0f;
+        float depth = 200.0f;
+        float sx = -width * 0.5f;
+        float sy = -height * 0.5f;
+        float sz = -depth * 0.5f;
+        float dx = width / (n - 1);
+        float dy = height / (n - 1);
+        float dz = depth / (n - 1);
+        for (uint32_t i = 0; i < n; i++) {
+            for (uint32_t j = 0; j < n; j++) {
+                for (uint32_t k = 0; k < n; k++) {
+                    uint32_t index = i * n * n + j * n + k;
+                    skull_item->instance_data[index].model =
+                        MathUtil::Translate({ sx + dx * i, sy + dy * j, sz + dz * k });
+                    skull_item->instance_data[index].tex_transform = MathUtil::Scale({ 2.0f, 2.0f, 1.0f });
+                    skull_item->instance_data[index].mat_index = index % materials.size();
+                }
+            }
         }
+        items[static_cast<size_t>(RenderLayer::Opaque)].push_back(skull_item.get());
 
-        for (const auto &item : render_items) {
-            items[static_cast<size_t>(RenderLayer::Opaque)].push_back(item.get());
-        }
+        render_items.emplace_back(std::move(skull_item));
     }
     void BuildDescriptorPool() {
-        size_t n_obj = n_inflight_frames * render_items.size();
+        size_t n_obj = n_inflight_frames;
         size_t n_tex = n_inflight_frames * textures.size();
-        size_t n_mat = n_inflight_frames * materials.size();
+        size_t n_mat = n_inflight_frames;
         size_t n_pass = n_inflight_frames;
 
         std::vector<vk::DescriptorPoolSize> pool_sizes = {
             // obj
-            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_obj),
+            vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, n_obj),
             // tex
             vk::DescriptorPoolSize(vk::DescriptorType::eCombinedImageSampler, n_tex),
             // mat
-            vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_mat),
+            vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, n_mat),
             // pass
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_pass), // vert pass
             vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, n_pass), // frag pass
@@ -659,7 +631,7 @@ private:
         frame_resources.resize(n_inflight_frames);
         for (size_t i = 0; i < n_inflight_frames; i++) {
             frame_resources[i] = std::make_unique<FrameResources>(device.get(), descriptor_pool.get(),
-                descriptor_set_layouts[0].get(), render_items.size(),
+                descriptor_set_layouts[0].get(), n_instance,
                 descriptor_set_layouts[1].get(), textures.size(),
                 descriptor_set_layouts[2].get(), materials.size(),
                 descriptor_set_layouts[3].get(), 1);
@@ -667,46 +639,48 @@ private:
         curr_fr = frame_resources[curr_frame = 0].get();
     }
     void WriteDescriptorSets() {
-        size_t obj_ub_size = sizeof(ObjectUB);
-        size_t mat_ub_size = sizeof(MaterialUB);
+        size_t obj_ub_size = sizeof(InstanceData);
+        size_t mat_ub_size = sizeof(MaterialData);
         size_t vert_pass_ub_size = sizeof(VertPassUB);
         size_t frag_pass_ub_size = sizeof(FragPassUB);
 
-        size_t count_buffer = n_inflight_frames * (render_items.size() + materials.size() + 2);
-        size_t count_image = n_inflight_frames * textures.size();
-        std::vector<vk::WriteDescriptorSet> writes(count_buffer + count_image);
+        size_t count_buffer = n_inflight_frames * (1 + 1 + 2);
+        size_t count_image_info = n_inflight_frames * textures.size();
+        size_t count_image_set = n_inflight_frames;
+        std::vector<vk::WriteDescriptorSet> writes(count_buffer + count_image_set);
         std::vector<vk::DescriptorBufferInfo> buffer_infos(count_buffer);
-        std::vector<vk::DescriptorImageInfo> image_infos(count_image);
+        std::vector<vk::DescriptorImageInfo> image_infos(count_image_info);
 
         vk::Sampler repeat_sampler = device->physical_device.getFeatures().samplerAnisotropy
             ? samplers["anisotropy_repeat"].get() : samplers["linear_repeat"].get();
 
-        size_t p = 0, pb = 0, pi = 0;
+        size_t p = 0, pb = 0, pi = 0, spi;
         for (size_t i = 0; i < n_inflight_frames; i++) {
-            for (size_t j = 0; j < render_items.size(); j++) {
-                buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->obj_ub->Buffer()->buffer.get(),
-                    obj_ub_size * j, obj_ub_size);
-                writes[p] = vk::WriteDescriptorSet(frame_resources[i]->obj_set[j], 0, 0, 1,
-                    vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos[pb], nullptr);
-                ++pb;
-                ++p;
-            }
+            // obj/instance
+            buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->obj_ub->Buffer()->buffer.get(),
+                0, n_instance * obj_ub_size);
+            writes[p] = vk::WriteDescriptorSet(frame_resources[i]->obj_set[0], 0, 0, 1,
+                vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[pb], nullptr);
+            ++pb;
+            ++p;
+            // tex
+            spi = pi;
             for (const auto &[_, tex] : textures) {
                 image_infos[pi] = vk::DescriptorImageInfo(repeat_sampler, tex->image_view.get(),
                     vk::ImageLayout::eShaderReadOnlyOptimal);
-                writes[p] = vk::WriteDescriptorSet(frame_resources[i]->tex_set[tex->tex_index], 0, 0, 1,
-                    vk::DescriptorType::eCombinedImageSampler, &image_infos[pi], nullptr, nullptr);
                 ++pi;
-                ++p;
             }
-            for (const auto &[_, mat] : materials) {
-                buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->mat_ub->Buffer()->buffer.get(),
-                    mat_ub_size * mat->mat_index, mat_ub_size);
-                writes[p] = vk::WriteDescriptorSet(frame_resources[i]->mat_set[mat->mat_index], 0, 0, 1,
-                    vk::DescriptorType::eUniformBuffer, nullptr, &buffer_infos[pb], nullptr);
-                ++pb;
-                ++p;
-            }
+            writes[p] = vk::WriteDescriptorSet(frame_resources[i]->tex_set[0], 0, 0, textures.size(),
+                vk::DescriptorType::eCombinedImageSampler, &image_infos[spi], nullptr, nullptr);
+            ++p;
+            // mat
+            buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->mat_ub->Buffer()->buffer.get(),
+                0, materials.size() * mat_ub_size);
+            writes[p] = vk::WriteDescriptorSet(frame_resources[i]->mat_set[0], 0, 0, 1,
+                vk::DescriptorType::eStorageBuffer, nullptr, &buffer_infos[pb], nullptr);
+            ++pb;
+            ++p;
+            // pass
             buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->vert_pass_ub->Buffer()->buffer.get(),
                 0, vert_pass_ub_size);
             writes[p] = vk::WriteDescriptorSet(frame_resources[i]->pass_set[0], 0, 0, 1,
@@ -796,6 +770,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Material>> materials;
     std::unordered_map<std::string, std::unique_ptr<Texture>> textures;
     std::unordered_map<std::string, vk::UniqueSampler> samplers;
+    uint32_t n_instance = 0;
 
     VertPassUB main_vert_pass_ub;
     FragPassUB main_frag_pass_ub;
@@ -813,12 +788,26 @@ private:
 
 int main() {
     try {
-        VulkanAppCamera app;
+        VulkanAppInstance app;
         app.Initialize();
         app.MainLoop();
     } catch (const std::runtime_error &e) {
         std::cerr << "[Error] " <<  e.what() << std::endl;
     }
+
+    /*
+    {
+        Frustum frustum(MathUtil::Perspective(MathUtil::k2Pi, 1.0f, 0.5f, 500.0f, true), true);
+        Eigen::Matrix4f view = MathUtil::LookAt({ 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f  });
+        frustum = MathUtil::TransformFrustum(view, frustum);
+        std::cerr << "q = " << frustum.orientation.coeffs() << std::endl;
+        std::cerr << "rs = " << frustum.right_slope << std::endl;
+        std::cerr << "ts = " << frustum.top_slope << std::endl;
+        std::cerr << "ls = " << frustum.left_slope << std::endl;
+        std::cerr << "bs = " << frustum.bottom_slope << std::endl;
+        std::cerr << "near = " << frustum.near << ", far = " << frustum.far << std::endl;
+    }
+     */
 
     return 0;
 }

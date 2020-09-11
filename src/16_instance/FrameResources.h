@@ -32,6 +32,21 @@ struct alignas(64) FragPassUB {
     Light lights[kMaxLights];
 };
 
+struct InstanceData {
+    Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f model_it = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f tex_transform = Eigen::Matrix4f::Identity();
+    uint32_t mat_index = 0;
+};
+
+struct MaterialData {
+    Eigen::Vector4f albedo = { 0.0f, 0.0f, 0.0f, 1.0f };
+    Eigen::Vector3f fresnel_r0 = { 0.0f, 0.0f, 0.0f };
+    float roughness = 64.0f;
+    Eigen::Matrix4f mat_transform = Eigen::Matrix4f::Identity();
+    uint32_t diffuse_index = 0;
+};
+
 struct Vertex {
     Eigen::Vector3f pos;
     Eigen::Vector3f norm;
@@ -62,8 +77,10 @@ struct FrameResources {
     std::vector<vk::DescriptorSet> mat_set;
     std::vector<vk::DescriptorSet> pass_set;
 
-    std::unique_ptr<HostVisibleBuffer<ObjectUB>> obj_ub;
-    std::unique_ptr<HostVisibleBuffer<MaterialUB>> mat_ub;
+    // std::unique_ptr<HostVisibleBuffer<ObjectUB>> obj_ub;
+    std::unique_ptr<HostVisibleBuffer<InstanceData>> obj_ub;
+    // std::unique_ptr<HostVisibleBuffer<MaterialUB>> mat_ub;
+    std::unique_ptr<HostVisibleBuffer<MaterialData>> mat_ub;
     std::unique_ptr<HostVisibleBuffer<VertPassUB>> vert_pass_ub;
     std::unique_ptr<HostVisibleBuffer<FragPassUB>> frag_pass_ub;
 };

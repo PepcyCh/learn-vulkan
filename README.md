@@ -25,7 +25,7 @@ Use CMake to build.
   * [x] chap. 14 - tessellation
 * [ ] Part 3 - Topics
   * [x] chap. 15 - first person camera & dynamic indexing (only camera, dynamic indexing left to chap 16)
-  * [ ] chap. 16 - instancing & frustum culling
+  * [x] chap. 16 - instancing & frustum culling (& dynamic indexing)
   * [ ] chap. 17 - picking
   * [ ] chap. 18 - cube mapping
   * [ ] chap. 19 - normal mapping

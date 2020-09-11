@@ -4,6 +4,33 @@
 
 #include "Eigen/Dense"
 
+enum class Containment {
+    eDisjoint,
+    eIntersects,
+    eContains,
+};
+
+struct BoundingBox {
+    Eigen::Vector3f center = { 0.0f, 0.0f, 0.0f };
+    Eigen::Vector3f extent = { 0.0f, 0.0f, 0.0f };
+};
+
+struct Frustum {
+    Frustum() = default;
+    explicit Frustum(const Eigen::Matrix4f &proj, bool proj_flip_y = false);
+
+    Containment Contains(const BoundingBox &bbox) const;
+
+    Eigen::Vector3f origin;
+    Eigen::Quaternionf orientation;
+    float right_slope;
+    float left_slope;
+    float top_slope;
+    float bottom_slope;
+    float near;
+    float far;
+};
+
 class MathUtil {
 public:
     inline static const float kPi = 3.141592653589793238463f;
@@ -18,6 +45,8 @@ public:
 
     static Eigen::Vector3f TransformPoint(const Eigen::Matrix4f &mat, const Eigen::Vector3f &point);
     static Eigen::Vector3f TransformVector(const Eigen::Matrix4f &mat, const Eigen::Vector3f &vec);
+    static BoundingBox TransformBoundingBox(const Eigen::Matrix4f &mat, const BoundingBox &bbox);
+    static Frustum TransformFrustum(const Eigen::Matrix4f &mat, const Frustum &frustum);
 
     static Eigen::Matrix4f AngelAxis(float angel, const Eigen::Vector3f &axis);
     static Eigen::Matrix4f Scale(const Eigen::Vector3f &scale);

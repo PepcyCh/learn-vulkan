@@ -198,6 +198,8 @@ void VulkanApp::CreateDevice() {
     physical_device_features.setFillModeNonSolid(VK_TRUE);
     physical_device_features.setGeometryShader(VK_TRUE);
     physical_device_features.setTessellationShader(VK_TRUE);
+    physical_device_features.setVertexPipelineStoresAndAtomics(VK_TRUE);
+    physical_device_features.setFragmentStoresAndAtomics(VK_TRUE);
 
     device = std::make_unique<vku::Device>(physical_device, extensions, physical_device_features);
 

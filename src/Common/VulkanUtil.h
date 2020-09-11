@@ -5,7 +5,7 @@
 
 #include "VulkanBuffer.h"
 #include "VulkanImage.h"
-#include "Eigen/Dense"
+#include "MathUtil.h"
 
 using namespace pepcy;
 
@@ -13,6 +13,7 @@ struct SubmeshGeometry {
     uint32_t n_index = 0;
     uint32_t first_index = 0;
     int vertex_offset = 0;
+    BoundingBox bbox;
 };
 
 struct MeshGeometry {
