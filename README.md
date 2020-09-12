@@ -26,7 +26,7 @@ Use CMake to build.
 * [ ] Part 3 - Topics
   * [x] chap. 15 - first person camera & dynamic indexing (only camera, dynamic indexing left to chap 16)
   * [x] chap. 16 - instancing & frustum culling (& dynamic indexing)
-  * [ ] chap. 17 - picking
+  * [x] chap. 17 - picking
   * [ ] chap. 18 - cube mapping
   * [ ] chap. 19 - normal mapping
   * [ ] chap. 20 - shadow mapping

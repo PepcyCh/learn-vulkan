@@ -31,6 +31,15 @@ struct Frustum {
     float far;
 };
 
+struct Ray {
+    bool IntersectWithBbox(const BoundingBox &bbox, float &tmin);
+    bool IntersectWithTriangle(const Eigen::Vector3f &v0, const Eigen::Vector3f &v1, const Eigen::Vector3f &v2,
+        float &tmin);
+
+    Eigen::Vector3f origin;
+    Eigen::Vector3f dir;
+};
+
 class MathUtil {
 public:
     inline static const float kPi = 3.141592653589793238463f;
@@ -47,6 +56,7 @@ public:
     static Eigen::Vector3f TransformVector(const Eigen::Matrix4f &mat, const Eigen::Vector3f &vec);
     static BoundingBox TransformBoundingBox(const Eigen::Matrix4f &mat, const BoundingBox &bbox);
     static Frustum TransformFrustum(const Eigen::Matrix4f &mat, const Frustum &frustum);
+    static Ray TransformRay(const Eigen::Matrix4f &mat, const Ray &ray);
 
     static Eigen::Matrix4f AngelAxis(float angel, const Eigen::Vector3f &axis);
     static Eigen::Matrix4f Scale(const Eigen::Vector3f &scale);

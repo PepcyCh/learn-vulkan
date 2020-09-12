@@ -1,5 +1,30 @@
 #include "MathUtil.h"
 
+#include <limits>
+
+namespace {
+
+bool DoesRayIntersectSegment(const Ray &r, const Eigen::Vector3f &v0,
+    const Eigen::Vector3f &v1, float &t) {
+    Eigen::Vector3f u = v1 - v0;
+    Eigen::Vector3f v = u.cross(r.dir);
+    if (v.norm() == 0) {
+        return false;
+    }
+    Eigen::Vector3f w = u.cross(v);
+    float c = w.dot(v0);
+    float temp = w.dot(r.dir);
+    if (temp == 0) {
+        return false;
+    }
+    t = (c - w.dot(r.origin)) / temp;
+    Eigen::Vector3f p = r.origin + r.dir * t;
+    float ut = (p - v0).dot(u) / u.norm();
+    return ut >= 0.0f && ut <= 1.0f;
+}
+
+}
+
 Frustum::Frustum(const Eigen::Matrix4f &proj, bool proj_flip_y) {
     origin = { 0.0f, 0.0f, 0.0f };
     // ctor of Eigen::Quaternion is (w, x, y, z) instead of (x, y, z, w)
@@ -88,6 +113,59 @@ Containment Frustum::Contains(const BoundingBox &bbox) const {
     return Containment::eContains;
 }
 
+bool Ray::IntersectWithBbox(const BoundingBox &bbox, float &tmin) {
+    Eigen::Vector3f pmin = bbox.center - bbox.extent;
+    Eigen::Vector3f pmax = bbox.center + bbox.extent;
+    float t0 = 0.0f;
+    float t1 = std::numeric_limits<float>::max();
+    for (int d = 0; d < 3; d++) {
+        float tt0 = std::min((pmin[d] - origin[d]) / dir[d], (pmax[d] - origin[d]) / dir[d]);
+        float tt1 = std::max((pmin[d] - origin[d]) / dir[d], (pmax[d] - origin[d]) / dir[d]);
+        t0 = std::max(t0, tt0);
+        t1 = std::min(t1, tt1);
+        if (t0 > t1) return false;
+    }
+    tmin = t1;
+    return true;
+}
+
+bool Ray::IntersectWithTriangle(const Eigen::Vector3f &v0, const Eigen::Vector3f &v1, const Eigen::Vector3f &v2,
+    float &tmin) {
+    Eigen::Vector3f e1 = v1 - v0;
+    Eigen::Vector3f e2 = v2 - v0;
+    Eigen::Vector3f s = origin - v0;
+
+    float det = e1.cross(dir).dot(e2);
+    if (det != 0) {
+        float du = -s.cross(e2).dot(dir);
+        float dv = e1.cross(dir).dot(s);
+        float dt = -s.cross(e2).dot(e1);
+        float u = du / det;
+        float v = dv / det;
+        float t = dt / det;
+        if (u < 0 || v < 0 || 1 - u - v < 0) {
+            return false;
+        } else {
+            tmin = t;
+            return t >= 0;
+        }
+    } else {
+        float t;
+        if (DoesRayIntersectSegment(*this, v0, v1, t)) {
+            tmin = t;
+            return t >= 0;
+        } else if (DoesRayIntersectSegment(*this, v0, v2, t)) {
+            tmin = t;
+            return t >= 0;
+        } else if (DoesRayIntersectSegment(*this, v1, v2, t)) {
+            tmin = t;
+            return t >= 0;
+        }
+    }
+
+    return false;
+}
+
 float MathUtil::Radians(float degree) {
     return degree / 180.0f * kPi;
 }
@@ -139,6 +217,10 @@ Frustum MathUtil::TransformFrustum(const Eigen::Matrix4f &mat, const Frustum &fr
     res.far = scale * frustum.far;
 
     return res;
+}
+
+Ray MathUtil::TransformRay(const Eigen::Matrix4f &mat, const Ray &ray) {
+    return { TransformPoint(mat, ray.origin), TransformVector(mat, ray.dir) };
 }
 
 Eigen::Matrix4f MathUtil::AngelAxis(float angel, const Eigen::Vector3f &axis) {
