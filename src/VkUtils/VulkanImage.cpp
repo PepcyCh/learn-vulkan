@@ -19,8 +19,9 @@ namespace pepcy::vku {
 
 Image::Image(const Device *device, vk::ImageType type, vk::Format format, const vk::Extent3D &extent,
     uint32_t mip_level, uint32_t array_layer, vk::SampleCountFlagBits sample_count, vk::ImageTiling tiling,
-    vk::ImageUsageFlags usage, vk::ImageLayout layout, vk::MemoryPropertyFlags properties) {
-    vk::ImageCreateInfo create_info({}, type, format, extent, mip_level, array_layer, sample_count,
+    vk::ImageUsageFlags usage, vk::ImageLayout layout, vk::MemoryPropertyFlags properties,
+    vk::ImageCreateFlags create_flag) {
+    vk::ImageCreateInfo create_info(create_flag, type, format, extent, mip_level, array_layer, sample_count,
         tiling, usage, vk::SharingMode::eExclusive, 0, nullptr, layout);
     image = device->logical_device->createImageUnique(create_info);
 

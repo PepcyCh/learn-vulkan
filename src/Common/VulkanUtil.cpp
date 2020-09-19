@@ -55,7 +55,7 @@ std::unique_ptr<Texture> VulkanUtil::LoadTextureFromFile(const vku::Device *devi
         if (gli_tex.faces() == 1) {
             image_view_type = (gli_tex.layers() == 1 ? vk::ImageViewType::e2D : vk::ImageViewType::e2DArray);
         } else {
-            image_view_type = vk::ImageViewType::e2DArray;
+            image_view_type = vk::ImageViewType::eCube;
             layers = 6;
             is_cube = true;
         }
@@ -68,10 +68,14 @@ std::unique_ptr<Texture> VulkanUtil::LoadTextureFromFile(const vku::Device *devi
     auto gli_format = gli_tex.format();
     auto format = static_cast<vk::Format>(gli_format);
 
+    vk::ImageCreateFlags image_create_flags = {};
+    if (is_cube) {
+        image_create_flags |= vk::ImageCreateFlagBits::eCubeCompatible;
+    }
     tex->image = std::make_unique<vku::Image>(device, image_type, format, extent, gli_tex.levels(), layers,
         vk::SampleCountFlagBits::e1, vk::ImageTiling::eOptimal,
         vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst, vk::ImageLayout::eUndefined,
-        vk::MemoryPropertyFlagBits::eDeviceLocal);
+        vk::MemoryPropertyFlagBits::eDeviceLocal, image_create_flags);
 
     vk::ImageViewCreateInfo image_view_create_info({}, tex->image->image.get(), image_view_type, format, {},
         { vk::ImageAspectFlagBits::eColor, 0, static_cast<uint32_t>(gli_tex.levels()), 0, layers });

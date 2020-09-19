@@ -4,12 +4,12 @@ Camera::Camera() {
     SetLens(MathUtil::kPiDiv4, 1.0f, 0.1f, 500.0f);
 }
 
-void Camera::SetLens(float fov, float aspect, float near, float far) {
+void Camera::SetLens(float fov, float aspect, float near, float far, bool flip_y) {
     this->fov = fov;
     this->aspect = aspect;
     this->near = near;
     this->far = far;
-    proj = MathUtil::Perspective(fov, aspect, near, far, true);
+    proj = MathUtil::Perspective(fov, aspect, near, far, flip_y);
 }
 
 void Camera::SetPosition(const Eigen::Vector3f &pos) {

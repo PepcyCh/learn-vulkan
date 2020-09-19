@@ -6,7 +6,7 @@ class Camera {
 public:
     Camera();
 
-    void SetLens(float fov, float aspect, float near, float far);
+    void SetLens(float fov, float aspect, float near, float far, bool flip_y = true);
     void SetPosition(const Eigen::Vector3f &pos);
     void LookAt(const Eigen::Vector3f &pos, const Eigen::Vector3f &lookat, const Eigen::Vector3f &up);
 
