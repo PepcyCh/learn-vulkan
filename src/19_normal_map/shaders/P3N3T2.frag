@@ -4,13 +4,20 @@ layout(location = 0) in FragIn {
     vec3 pos;
     vec3 norm;
     vec2 texc;
-    flat int mat_index;
+    vec3 tan;
 } fin;
 
 layout(location = 0) out vec4 out_color;
 
-#define kDiffuseMapCount 6
-layout(set = 1, binding = 0) uniform sampler2D diffuse_cis[kDiffuseMapCount];
+layout(set = 0, binding = 0) uniform ObjectUniform {
+    mat4 model;
+    mat4 model_it;
+    mat4 tex_transform;
+    int mat_index;
+} obj;
+
+#define kTexturesCount 6
+layout(set = 1, binding = 0) uniform sampler2D textures[kTexturesCount];
 
 struct MaterialData {
     vec4 albedo;
@@ -18,6 +25,7 @@ struct MaterialData {
     float roughness;
     mat4 mat_transform;
     int diffuse_index;
+    int normal_index;
 };
 layout(set = 2, binding = 0) buffer MaterialDataBuffer {
     MaterialData material_data[];
@@ -57,6 +65,8 @@ layout(set = 3, binding = 1) uniform PassUniform {
     vec2 _1;
     Light lights[kMaxLight];
 } pass;
+
+layout(set = 4, binding = 0) uniform samplerCube cubemap;
 
 float CalcAttenuation(float d, float falloff_start, float falloff_end) {
     return clamp((falloff_end - d) / (falloff_end - falloff_start), 0.0f, 1.0f);
@@ -138,26 +148,43 @@ vec4 ComputeLight(Light lights[kMaxLight], Material mat, vec3 pos, vec3 normal, 
     return vec4(res, 0.0f);
 }
 
+vec3 CalcBumpedNormal(vec3 norm_map, vec3 norm, vec3 tan) {
+    vec3 norm_z = 2.0f * norm_map - 1.0f;
+
+    vec3 N = norm;
+    vec3 T = normalize(tan - dot(tan, N) * N);
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
+
+    return TBN * norm_z;
+}
+
 void main() {
-    vec2 texc = vec2(material_data[fin.mat_index].mat_transform * vec4(fin.texc, 0.0f, 1.0f));
-    vec4 diffuse_tex = texture(diffuse_cis[material_data[fin.mat_index].diffuse_index], texc);
+    vec2 texc = vec2(material_data[obj.mat_index].mat_transform * vec4(fin.texc, 0.0f, 1.0f));
+    vec4 diffuse_tex = texture(textures[material_data[obj.mat_index].diffuse_index], texc);
 #ifdef kAlphaTest
     if (diffuse_tex.a < 0.1f) {
         discard;
     }
 #endif
+    vec4 norm_map = texture(textures[material_data[obj.mat_index].normal_index], texc);
     vec3 norm = normalize(fin.norm);
+    norm = CalcBumpedNormal(norm_map.xyz, norm, fin.tan);
     vec3 view = pass.eye - fin.pos;
     float view_dist = length(view);
     view = normalize(view);
-    vec4 ambient = pass.ambient * material_data[fin.mat_index].albedo;
-    float shininess = 1.0f - material_data[fin.mat_index].roughness;
-    vec4 diffuse = material_data[fin.mat_index].albedo * diffuse_tex;
-    Material mat = { diffuse, material_data[fin.mat_index].fresnel_r0, shininess };
+    vec4 ambient = pass.ambient * material_data[obj.mat_index].albedo;
+    float shininess = (1.0f - material_data[obj.mat_index].roughness) * norm_map.a;
+    vec4 diffuse = material_data[obj.mat_index].albedo * diffuse_tex;
+    Material mat = { diffuse, material_data[obj.mat_index].fresnel_r0, shininess };
     vec4 light_res = ComputeLight(pass.lights, mat, fin.pos, norm, view);
     vec4 res = light_res + ambient;
-    float fog_coe = clamp((view_dist - pass.fog_start) / (pass.fog_end - pass.fog_start), 0.0f, 1.0f);
-    res = mix(res, pass.fog_color, fog_coe);
+
+    vec3 r = reflect(-view, norm);
+    vec3 reflected_color = texture(cubemap, r).rgb;
+    vec3 fresnel_factor = SchlickFresnel(mat.fresnel_r0, norm, r);
+    res.rgb += shininess * fresnel_factor * reflected_color;
+
     res.a = diffuse.a;
     out_color = res;
 }

@@ -62,6 +62,7 @@ struct Material {
     float roughness = 0.0f;
     Eigen::Matrix4f mat_transform = Eigen::Matrix4f::Identity();
     size_t diffuse_tex_index = 0;
+    size_t normal_tex_index = 0;
 };
 
 struct Texture {

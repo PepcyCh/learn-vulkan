@@ -654,7 +654,7 @@ private:
         vk::Sampler repeat_sampler = device->physical_device.getFeatures().samplerAnisotropy
             ? samplers["anisotropy_repeat"].get() : samplers["linear_repeat"].get();
 
-        size_t p = 0, pb = 0, pi = 0, spi;
+        size_t p = 0, pb = 0, pi = 0;
         for (size_t i = 0; i < n_inflight_frames; i++) {
             // obj/instance
             buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->obj_ub->Buffer()->buffer.get(),
@@ -664,14 +664,13 @@ private:
             ++pb;
             ++p;
             // tex
-            spi = pi;
             for (const auto &[_, tex] : textures) {
-                image_infos[pi] = vk::DescriptorImageInfo(repeat_sampler, tex->image_view.get(),
+                image_infos[pi + tex->tex_index] = vk::DescriptorImageInfo(repeat_sampler, tex->image_view.get(),
                     vk::ImageLayout::eShaderReadOnlyOptimal);
-                ++pi;
             }
             writes[p] = vk::WriteDescriptorSet(frame_resources[i]->tex_set[0], 0, 0, textures.size(),
-                vk::DescriptorType::eCombinedImageSampler, &image_infos[spi], nullptr, nullptr);
+                vk::DescriptorType::eCombinedImageSampler, &image_infos[pi], nullptr, nullptr);
+            pi += textures.size();
             ++p;
             // mat
             buffer_infos[pb] = vk::DescriptorBufferInfo(frame_resources[i]->mat_ub->Buffer()->buffer.get(),

@@ -28,7 +28,7 @@ Use CMake to build.
   * [x] chap. 16 - instancing & frustum culling (& dynamic indexing)
   * [x] chap. 17 - picking
   * [x] chap. 18 - cube mapping
-  * [ ] chap. 19 - normal mapping
+  * [x] chap. 19 - normal mapping
   * [ ] chap. 20 - shadow mapping
   * [ ] chap. 21 - ambient occlusion
   * [ ] chap. 22 - quaternions
