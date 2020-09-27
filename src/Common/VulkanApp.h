@@ -41,6 +41,8 @@ protected:
     void InitializeVulkan();
 
     void CreateDevice();
+    virtual void SetDeviceFeatures(vk::PhysicalDeviceFeatures &features,
+        std::vector<std::shared_ptr<void>> &ex_features);
     virtual void CreateSwapchain();
     void CreateCommandObjects();
     void CreateSyncObjects();

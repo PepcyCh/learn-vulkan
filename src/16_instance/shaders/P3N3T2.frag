@@ -19,7 +19,7 @@ struct MaterialData {
     mat4 mat_transform;
     int diffuse_index;
 };
-layout(set = 2, binding = 0) buffer MaterialDataBuffer {
+layout(set = 2, binding = 0) buffer readonly MaterialDataBuffer {
     MaterialData material_data[];
 };
 

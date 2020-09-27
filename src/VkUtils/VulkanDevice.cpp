@@ -5,7 +5,7 @@
 namespace pepcy::vku {
 
 Device::Device(vk::PhysicalDevice physical_device_, const std::vector<const char *> &extensions,
-    const vk::PhysicalDeviceFeatures &features) {
+    const vk::PhysicalDeviceFeatures2 &features) {
     assert(physical_device_ && "[vku::Device::Device] Create vku::Device with a null physical device");
     physical_device = physical_device_;
 
@@ -38,7 +38,8 @@ Device::Device(vk::PhysicalDevice physical_device_, const std::vector<const char
     }
 
     vk::DeviceCreateInfo create_info({}, queue_create_infos.size(), queue_create_infos.data(),
-        0, nullptr, extensions.size(), extensions.data(), &features);
+        0, nullptr, extensions.size(), extensions.data(), nullptr);
+    create_info.setPNext(&features);
     logical_device = physical_device.createDeviceUnique(create_info);
 }
 

@@ -28,8 +28,6 @@ struct RenderItem {
 
 enum class RenderLayer : size_t {
     Opaque,
-    AlphaTest,
-    Transparent,
     Highlight,
     Count
 };
@@ -135,14 +133,6 @@ private:
 
         command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipelines["normal"].get());
         DrawItems(items[static_cast<size_t>(RenderLayer::Opaque)]);
-
-        command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
-            graphics_pipelines["alpha_test"].get());
-        DrawItems(items[static_cast<size_t>(RenderLayer::AlphaTest)]);
-
-        command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
-            graphics_pipelines["transparent"].get());
-        DrawItems(items[static_cast<size_t>(RenderLayer::Transparent)]);
 
         command_buffers[curr_frame]->bindPipeline(vk::PipelineBindPoint::eGraphics,
             graphics_pipelines["highlight"].get());
@@ -351,8 +341,6 @@ private:
             device->logical_device.get());
         shader_modules["frag"] = VulkanUtil::CreateShaderModule(src_path + "17_pick/shaders/P3N3T2.frag.spv",
             device->logical_device.get());
-        shader_modules["frag_alpha_test"] = VulkanUtil::CreateShaderModule(
-            src_path + "15_camera/shaders/P3N3T2_alpha_test.frag.spv", device->logical_device.get());
     }
     void BuildCarGeometries() {
         std::ifstream fin(root_path + "models/car.txt");
@@ -636,24 +624,13 @@ private:
             &dynamic_state, pipeline_layout.get(), render_pass.get(), 0);
         graphics_pipelines["normal"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
 
-        auto shader_stages_alpha_test = shader_stages;
-        shader_stages_alpha_test[1] = vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eFragment,
-            shader_modules["frag_alpha_test"].get(), "main");
-        rasterization.setCullMode(vk::CullModeFlagBits::eNone);
-        create_info.setStageCount(shader_stages_alpha_test.size()).setPStages(shader_stages_alpha_test.data());
-        graphics_pipelines["alpha_test"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
-
         rasterization.setCullMode(vk::CullModeFlagBits::eBack);
         cb_attachment.setBlendEnable(VK_TRUE).setColorBlendOp(vk::BlendOp::eAdd)
             .setSrcColorBlendFactor(vk::BlendFactor::eSrcAlpha)
             .setDstColorBlendFactor(vk::BlendFactor::eOneMinusSrcAlpha)
             .setSrcAlphaBlendFactor(vk::BlendFactor::eOne)
             .setDstAlphaBlendFactor(vk::BlendFactor::eZero);
-        depth_stencil.setDepthWriteEnable(VK_FALSE);
-        create_info.setStageCount(shader_stages.size()).setPStages(shader_stages.data());
-        graphics_pipelines["transparent"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
-
-        depth_stencil.setDepthCompareOp(vk::CompareOp::eLessOrEqual);
+        depth_stencil.setDepthWriteEnable(VK_FALSE).setDepthCompareOp(vk::CompareOp::eLessOrEqual);
         graphics_pipelines["highlight"] = device->logical_device->createGraphicsPipelineUnique({}, create_info).value;
     }
 

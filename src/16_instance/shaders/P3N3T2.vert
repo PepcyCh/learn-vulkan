@@ -17,7 +17,7 @@ struct InstanceData {
     mat4 tex_transform;
     int mat_index;
 };
-layout(set = 0, binding = 0) buffer InstanceDataBuffer {
+layout(set = 0, binding = 0) buffer readonly InstanceDataBuffer {
     InstanceData instance_data[];
 };
 

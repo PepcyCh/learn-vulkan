@@ -38,6 +38,7 @@ std::vector<const char *> GetRequiredExtensions() {
 #ifndef NDEBUG
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 #endif
+    extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
     return extensions;
 }
 
@@ -191,22 +192,35 @@ void VulkanApp::CreateDevice() {
         std::cerr << "                score: " << score << std::endl;
 #endif
     }
-    vk::PhysicalDeviceFeatures physical_device_features {};
+    vk::PhysicalDeviceFeatures features {};
+    vk::PhysicalDeviceFeatures2 features2 {};
     if (max_score & ePhysicalDeviceSamplerAnisotropy) {
-        physical_device_features.setSamplerAnisotropy(VK_TRUE);
+        features.setSamplerAnisotropy(VK_TRUE);
     }
-    physical_device_features.setFillModeNonSolid(VK_TRUE);
-    physical_device_features.setGeometryShader(VK_TRUE);
-    physical_device_features.setTessellationShader(VK_TRUE);
-    physical_device_features.setVertexPipelineStoresAndAtomics(VK_TRUE);
-    physical_device_features.setFragmentStoresAndAtomics(VK_TRUE);
+    std::vector<std::shared_ptr<void>> ex_features;
+    SetDeviceFeatures(features, ex_features);
+    for (auto &p : ex_features) {
+        void **pp = reinterpret_cast<void **>(p.get());
+        pp += sizeof(vk::StructureType);
+        *pp = features2.pNext;
+        features2.setPNext(p.get());
+    }
+    features2.setFeatures(features);
 
-    device = std::make_unique<vku::Device>(physical_device, extensions, physical_device_features);
+    device = std::make_unique<vku::Device>(physical_device, extensions, features2);
 
     graphics_queue = device->GraphicsQueue();
     // compute_queue = device->ComputeQueue();
     // transfer_queue = device->TransferQueue();
 }
+
+void VulkanApp::SetDeviceFeatures(vk::PhysicalDeviceFeatures &features,
+    std::vector<std::shared_ptr<void>> &ex_features) {
+    features.setFillModeNonSolid(VK_TRUE);
+    features.setGeometryShader(VK_TRUE);
+    features.setTessellationShader(VK_TRUE);
+}
+
 
 void VulkanApp::CreateSwapchain() {
     swapchain = std::make_unique<vku::Swapchain>(device.get(), surface.get(),

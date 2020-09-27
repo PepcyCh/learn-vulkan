@@ -68,6 +68,16 @@ layout(set = 3, binding = 1) uniform PassUniform {
 
 layout(set = 4, binding = 0) uniform samplerCube cubemap;
 
+layout(set = 5, binding = 0) uniform WaveTexTransform {
+    mat4 height_trans0;
+    mat4 height_trans1;
+    mat4 normal_trans0;
+    mat4 normal_trans1;
+} wave_tex_trans;
+
+layout(set = 5, binding = 1) uniform sampler2D wave_tex0;
+layout(set = 5, binding = 2) uniform sampler2D wave_tex1;
+
 float CalcAttenuation(float d, float falloff_start, float falloff_end) {
     return clamp((falloff_end - d) / (falloff_end - falloff_start), 0.0f, 1.0f);
 }
@@ -149,7 +159,8 @@ vec4 ComputeLight(Light lights[kMaxLight], Material mat, vec3 pos, vec3 normal, 
 }
 
 vec3 CalcBumpedNormal(vec3 norm_map, vec3 norm, vec3 tan) {
-    vec3 norm_z = 2.0f * norm_map - 1.0f;
+    // vec3 norm_z = 2.0f * norm_map - 1.0f;
+    vec3 norm_z = norm_map;
 
     vec3 N = norm;
     vec3 T = normalize(tan - dot(tan, N) * N);
@@ -167,14 +178,17 @@ void main() {
         discard;
     }
 #endif
-    vec4 norm_map = texture(textures[material_data[obj.mat_index].normal_index], texc);
+    vec2 normal_uv0 = vec2(wave_tex_trans.normal_trans0 * vec4(fin.texc, 0.0f, 1.0f));
+    vec2 normal_uv1 = vec2(wave_tex_trans.normal_trans1 * vec4(fin.texc, 0.0f, 1.0f));
+    vec3 norm_map = normalize(texture(wave_tex0, normal_uv0).xyz * 2.0f +
+        texture(wave_tex1, normal_uv1).xyz * 2.0f - 2.0f);
     vec3 norm = normalize(fin.norm);
-    norm = CalcBumpedNormal(norm_map.xyz, norm, fin.tan);
+    norm = CalcBumpedNormal(norm_map, norm, fin.tan);
     vec3 view = pass.eye - fin.pos;
     float view_dist = length(view);
     view = normalize(view);
     vec4 ambient = pass.ambient * material_data[obj.mat_index].albedo;
-    float shininess = (1.0f - material_data[obj.mat_index].roughness) * norm_map.a;
+    float shininess = (1.0f - material_data[obj.mat_index].roughness);
     vec4 diffuse = material_data[obj.mat_index].albedo * diffuse_tex;
     Material mat = { diffuse, material_data[obj.mat_index].fresnel_r0, shininess };
     vec4 light_res = ComputeLight(pass.lights, mat, fin.pos, norm, view);

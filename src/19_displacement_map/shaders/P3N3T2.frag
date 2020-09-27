@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 
 layout(location = 0) in FragIn {
     vec3 pos;
@@ -16,8 +17,7 @@ layout(set = 0, binding = 0) uniform ObjectUniform {
     int mat_index;
 } obj;
 
-#define kTexturesCount 6
-layout(set = 1, binding = 0) uniform sampler2D textures[kTexturesCount];
+layout(set = 1, binding = 0) uniform sampler2D textures[];
 
 struct MaterialData {
     vec4 albedo;

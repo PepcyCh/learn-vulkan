@@ -8,7 +8,7 @@ namespace pepcy::vku {
 
 struct  Device {
     Device(vk::PhysicalDevice physical_device_, const std::vector<const char *> &extensions,
-        const vk::PhysicalDeviceFeatures &features);
+        const vk::PhysicalDeviceFeatures2 &features);
 
     vk::Queue GraphicsQueue() const;
     vk::Queue ComputeQueue() const;
