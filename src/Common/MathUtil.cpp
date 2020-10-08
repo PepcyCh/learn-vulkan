@@ -285,6 +285,21 @@ Eigen::Matrix4f MathUtil::Perspective(float fov, float aspect, float near, float
     }
     return m;
 }
+Eigen::Matrix4f MathUtil::Orthographic(float l, float r, float b, float t, float n, float f) {
+    float invw = 1.0f / (r - l);
+    float invh = 1.0f / (t - b);
+    float invd = 1.0f / (f - n);
+    Eigen::Matrix4f m;
+    m.setZero();
+    m(0, 0) = 2.0f * invw;
+    m(1, 1) = 2.0f * invh;
+    m(2, 2) = -1.0f * invd;
+    m(3, 3) = 1.0f;
+    m(0, 3) = -(l + r) * invw;
+    m(1, 3) = -(b + t) * invh;
+    m(2, 3) = -n * invd;
+    return m;
+}
 
 int MathUtil::RandI(int l, int r) {
     if (!rnd_init) {

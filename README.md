@@ -13,7 +13,7 @@ Use CMake to build.
 
 ## TODO
 
-* [x] Part 2 - D3D Foundation
+* [x] Part 2 - Foundation
   * [x] chap. 6 - drawing I
   * [x] chap. 7 - drawing II
   * [x] chap. 8 - lighting
@@ -29,7 +29,7 @@ Use CMake to build.
   * [x] chap. 17 - picking
   * [x] chap. 18 - cube mapping
   * [x] chap. 19 - normal mapping
-  * [ ] chap. 20 - shadow mapping
+  * [x] chap. 20 - shadow mapping
   * [ ] chap. 21 - ambient occlusion
   * [ ] chap. 22 - quaternions
   * [ ] chap. 23 - character animation

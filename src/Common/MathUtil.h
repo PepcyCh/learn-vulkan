@@ -68,6 +68,7 @@ public:
     static Eigen::Matrix4f ViewTransform(const Eigen::Vector3f &pos, const Eigen::Vector3f &right,
         const Eigen::Vector3f &up, const Eigen::Vector3f &back);
     static Eigen::Matrix4f Perspective(float fov, float aspect, float near, float far, bool flip_y = false);
+    static Eigen::Matrix4f Orthographic(float l, float r, float b, float t, float n, float f);
 
     static int RandI(int l, int r);
     static float RandF(float l, float r);
